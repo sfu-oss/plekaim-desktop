@@ -4,6 +4,7 @@ const nextConfig = {
   images: { unoptimized: true },
   assetPrefix: './',
   trailingSlash: true,
+  outputFileTracingRoot: __dirname,
 };
 
 module.exports = nextConfig;
