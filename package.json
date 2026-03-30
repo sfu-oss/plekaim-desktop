@@ -1,0 +1,59 @@
+{
+  "name": "plekaim-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "PleKaim desktop app (Electron + Next.js)",
+  "main": "electron/main.js",
+  "author": "sfu-oss",
+  "scripts": {
+    "dev:renderer": "next dev -p 3000",
+    "dev:electron": "ELECTRON_DISABLE_SECURITY_WARNINGS=1 electron .",
+    "dev": "concurrently \"npm:dev:renderer\" \"wait-on http://localhost:3000 && npm:dev:electron\"",
+    "build:renderer": "next build",
+    "build": "npm run build:renderer && electron-builder",
+    "dist": "npm run build",
+    "lint": "next lint"
+  },
+  "build": {
+    "appId": "com.plekaim.desktop",
+    "productName": "PleKaim",
+    "files": [
+      "electron/**/*",
+      "renderer/**/*",
+      "renderer/.next/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "directories": {
+      "buildResources": "assets"
+    },
+    "mac": {
+      "target": "dmg",
+      "category": "public.app-category.engineering"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "sfu-oss",
+      "repo": "plekaim-desktop",
+      "private": true
+    },
+    "extraMetadata": {
+      "main": "electron/main.js"
+    }
+  },
+  "dependencies": {
+    "next": "16.1.6",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "electron": "^30.0.0",
+    "electron-builder": "^24.9.1",
+    "electron-updater": "^6.3.0",
+    "wait-on": "^7.2.0"
+  }
+}

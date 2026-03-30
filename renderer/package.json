@@ -1,0 +1,14 @@
+{
+  "name": "plekaim-renderer",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 3000",
+    "build": "next build",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "next": "16.1.6",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  }
+}
