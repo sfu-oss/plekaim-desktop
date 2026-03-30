@@ -1,7 +1,0 @@
-{
-  "version": 3,
-  "sources": [],
-  "sections": [
-    {"offset": {"line": 4, "column": 0}, "map": {"version":3,"sources":["file:///Users/moltoshi/Desktop/plekaim-desktop/renderer/app/layout.tsx"],"sourcesContent":["export const metadata = {\n  title: \"PleKaim Desktop\",\n  description: \"Pipeline Engineering Calculator\",\n};\n\nexport default function RootLayout({ children }: { children: React.ReactNode }) {\n  return (\n    <html lang=\"nl\">\n      <body style={{ margin: 0, background: \"#0b1020\", color: \"#e2e8f0\" }}>\n        {children}\n      </body>\n    </html>\n  );\n}\n"],"names":[],"mappings":";;;;;;;;AAAO,MAAM,WAAW;IACtB,OAAO;IACP,aAAa;AACf;AAEe,SAAS,WAAW,EAAE,QAAQ,EAAiC;IAC5E,qBACE,0PAAC;QAAK,MAAK;kBACT,cAAA,0PAAC;YAAK,OAAO;gBAAE,QAAQ;gBAAG,YAAY;gBAAW,OAAO;YAAU;sBAC/D;;;;;;;;;;;AAIT"}},
-    {"offset": {"line": 41, "column": 0}, "map": {"version":3,"sources":["file:///Users/moltoshi/Desktop/plekaim-desktop/renderer/node_modules/next/src/server/route-modules/app-page/vendored/rsc/react-jsx-dev-runtime.ts"],"sourcesContent":["module.exports = (\n  require('../../module.compiled') as typeof import('../../module.compiled')\n).vendored['react-rsc']!.ReactJsxDevRuntime\n"],"names":["module","exports","require","vendored","ReactJsxDevRuntime"],"mappings":"AAAAA,OAAOC,OAAO,GACZC,QAAQ,qIACRC,QAAQ,CAAC,YAAY,CAAEC,kBAAkB","ignoreList":[0]}}]
-}

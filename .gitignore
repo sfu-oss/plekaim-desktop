@@ -1,4 +1,5 @@
 node_modules/
+.next/
 renderer/node_modules/
 renderer/.next/
 renderer/out/
