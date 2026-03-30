@@ -6,21 +6,20 @@
   "main": "electron/main.js",
   "author": "sfu-oss",
   "scripts": {
-    "dev:renderer": "next dev -p 3000",
+    "dev:renderer": "cd renderer && npm run dev",
     "dev:electron": "ELECTRON_DISABLE_SECURITY_WARNINGS=1 electron .",
     "dev": "concurrently \"npm:dev:renderer\" \"wait-on http://localhost:3000 && npm:dev:electron\"",
-    "build:renderer": "next build",
+    "build:renderer": "cd renderer && npm run build",
     "build": "npm run build:renderer && electron-builder",
     "dist": "npm run build",
-    "lint": "next lint"
+    "postinstall": "cd renderer && npm install"
   },
   "build": {
     "appId": "com.plekaim.desktop",
     "productName": "PleKaim",
     "files": [
       "electron/**/*",
-      "renderer/**/*",
-      "renderer/.next/**/*",
+      "renderer/out/**/*",
       "package.json"
     ],
     "asar": true,
@@ -43,11 +42,6 @@
     "extraMetadata": {
       "main": "electron/main.js"
     }
-  },
-  "dependencies": {
-    "next": "16.1.6",
-    "react": "18.3.1",
-    "react-dom": "18.3.1"
   },
   "devDependencies": {
     "concurrently": "^8.2.2",

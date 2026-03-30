@@ -1,0 +1,9 @@
+node_modules/
+renderer/node_modules/
+renderer/.next/
+renderer/out/
+dist/
+*.dmg
+*.exe
+*.AppImage
+.DS_Store
