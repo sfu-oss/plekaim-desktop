@@ -47,7 +47,9 @@
     "concurrently": "^8.2.2",
     "electron": "^30.0.0",
     "electron-builder": "^24.9.1",
-    "electron-updater": "^6.3.0",
     "wait-on": "^7.2.0"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.0"
   }
 }
