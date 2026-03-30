@@ -9,7 +9,7 @@
     "dev:renderer": "cd renderer && npm run dev",
     "dev:electron": "ELECTRON_DISABLE_SECURITY_WARNINGS=1 electron .",
     "dev": "concurrently \"npm:dev:renderer\" \"wait-on http://localhost:3000 && npm:dev:electron\"",
-    "build:renderer": "cd renderer && npm run build",
+    "build:renderer": "cd renderer && npm run build && cd .. && node scripts/fix-paths.js",
     "build": "npm run build:renderer && electron-builder",
     "dist": "npm run build",
     "postinstall": "cd renderer && npm install"

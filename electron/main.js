@@ -34,11 +34,12 @@ function createWindow() {
   });
 
   if (isDev) {
-    win.loadURL('http://localhost:3000');
+    win.loadURL('http://localhost:3000/ple');
     win.webContents.openDevTools({ mode: 'detach' });
   } else {
-    const indexPath = path.join(__dirname, '..', 'renderer', 'out', 'index.html');
-    win.loadFile(indexPath);
+    // Load ple/index.html directly (root index.html is a redirect that fails in file://)
+    const plePath = path.join(__dirname, '..', 'renderer', 'out', 'ple', 'index.html');
+    win.loadFile(plePath);
   }
 
   win.webContents.setWindowOpenHandler(({ url }) => {
