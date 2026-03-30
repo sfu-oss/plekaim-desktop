@@ -1,6 +1,6 @@
 {
   "name": "plekaim-desktop",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "private": true,
   "description": "PleKaim desktop app (Electron + Next.js)",
   "main": "electron/main.js",
