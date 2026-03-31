@@ -836,7 +836,7 @@ export function parseSheetsToModel(sheets: Record<string, any[][]>): PleModel {
   };
 
   // Importeer GENSOIL resultaten als die bestaan
-  const gensoilRows = sheetToObjects(sheets.GENSOIL || []);
+  const gensoilRows = sheetToObjects(sheets["GENSOIL"] || []);
   if (gensoilRows.length > 0) {
     model.soilWizardResults = gensoilRows.map((r, i) => ({
       nodeId: normalizeId(r.IDENT),
@@ -1260,9 +1260,63 @@ export function modelToRawSheets(model: PleModel): Record<string, any[][]> {
     [{ key: "Identifier" }, { key: "SECTREF" }],
   );
 
-  // GENSOIL — Soil Wizard resultaten (per-node grondparameters)
+  // GENSOIL — Soil Wizard resultaten als PLE4Win-compatibele tabellen
+  // PLE4Win Design Function 3.2 verwacht aparte polygon-tabellen per parameter
+  // Elke tabel heeft: Identifier, VALUE1 (vóór punt), VALUE2 (ná punt), UNCF-L, UNCF-H
   if (model.soilWizardResults && model.soilWizardResults.length > 0) {
     const swRes = model.soilWizardResults;
+    
+    // Helper: maak een PLE4Win soil polygon-tabel
+    const soilTable = (param: string, unit: string, getValue: (r: typeof swRes[0]) => number, uncf = 1.7) => {
+      return [
+        [" ", "Identifier", `${param}1`, `${param}2`, "UNCF-L", "UNCF-H"],
+        [" ", " ", unit, unit, " ", " "],
+        ...swRes.map((r, i) => [
+          i + 1, r.nodeId,
+          +getValue(r).toFixed(4), null, uncf, uncf,
+        ]),
+      ];
+    };
+    
+    // KLH — Horizontale grondveerstijfheid [kN/m²]
+    sheets.KLH = soilTable("KLH", "kN/m²", r => r.KLH);
+    
+    // KLS — Verticale neerwaartse stijfheid [kN/m²]
+    sheets.KLS = soilTable("KLS", "kN/m²", r => r.KLS);
+    
+    // KLT — Verticale opwaartse stijfheid [kN/m²]
+    sheets.KLT = soilTable("KLT", "kN/m²", r => r.KLT);
+    
+    // RVS — Draagkracht onderzijde [kN/m]
+    sheets.RVS = soilTable("RVS", "kN/m", r => r.RVS);
+    
+    // RVT — Maximale opwaartse reactie [kN/m]
+    sheets.RVT = soilTable("RVT", "kN/m", r => r.RVT);
+    
+    // RH — Maximale horizontale reactie [kN/m]
+    sheets.RH = soilTable("RH", "kN/m", r => r.RH);
+    
+    // F — Buis-grondwrijving [kN/m²]
+    sheets.F = soilTable("F", "kN/m²", r => r.F);
+    
+    // UF — Verplaatsing bij max wrijving [mm]
+    sheets.UF = soilTable("UF", "mm", r => r.UF, 1.0);
+    
+    // SOILNB — Neutrale bovengrondbelasting [kN/m]
+    // SOILNB = γ × H × D (neutrale grondbelasting per lengte-eenheid)
+    sheets.SOILNB = [
+      [" ", "Identifier", "SOILNB1", "SOILNB2"],
+      [" ", " ", "kN/m", "kN/m"],
+      ...swRes.map((r, i) => {
+        // Zoek de node in het model om D te bepalen
+        const node = model.nodes.find(n => n.id === r.nodeId);
+        const D_m = ((node?.D0 || model._globalD || 219.1) / 1000);
+        const soilnb = r.sigmaK * D_m;  // σk × D ≈ γ × H × D
+        return [i + 1, r.nodeId, +soilnb.toFixed(4), null];
+      }),
+    ];
+    
+    // GENSOIL samenvattingstabel (voor KaimPLE intern gebruik)
     sheets.GENSOIL = [
       [" ", "IDENT", "KLH", "KLS", "KLT", "RVS", "RVT", "RH", "F", "UF", "SIGMAK", "H_COVER"],
       [" ", " ", "kN/m²", "kN/m²", "kN/m²", "kN/m", "kN/m", "kN/m", "kN/m²", "mm", "kN/m²", "mm"],

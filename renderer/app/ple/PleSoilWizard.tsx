@@ -257,10 +257,10 @@ function calcDcInfin(phi_deg: number): number {
 }
 
 /**
- * Kq functie: Kq(φ, H★/D) conform NEN 3650-1:2020
+ * Kq functie: Kq(φ, Hstar/D) conform NEN 3650-1:2020
  * Kq0 = Nq × exp(π × tan(φ))
  * Kq∞ = Nc × dc∞ × Nq  (vereenvoudigd)
- * Kq = Kq0 + (Kq∞ - Kq0) × (1 - exp(-αq × H_star/D))
+ * Kq = Kq0 + (Kq∞ - Kq0) × (1 - exp(-αq × Hstar/D))
  */
 function calcKq(phi_deg: number, HstarOverD: number): number {
   if (phi_deg <= 0.01) return 0;
@@ -269,9 +269,9 @@ function calcKq(phi_deg: number, HstarOverD: number): number {
   const Nc = calcNc(phi_deg);
   const dcInf = calcDcInfin(phi_deg);
   
-  // Kq0: ondiep (H_star/D → 0)
+  // Kq0: ondiep (Hstar/D → 0)
   const Kq0 = Nq;
-  // Kq∞: diep (H_star/D → ∞)
+  // Kq∞: diep (Hstar/D → ∞)
   const Kq_infin = Nc * dcInf * Nq;
   // Overgangsparameter
   const alphaQ = 0.2 + 0.01 * phi_deg;  // empirische benadering NEN 3650
@@ -281,7 +281,7 @@ function calcKq(phi_deg: number, HstarOverD: number): number {
 }
 
 /**
- * Kc functie: Kc(φ, H★/D) conform NEN 3650-1:2020
+ * Kc functie: Kc(φ, Hstar/D) conform NEN 3650-1:2020
  * Analoog aan Kq maar voor cohesieve component
  */
 function calcKc(phi_deg: number, HstarOverD: number): number {
@@ -324,7 +324,7 @@ export function calcSoilParametersAtNode(
   const H_bottom = pipeAxisDepth + r; // diepte onderzijde buis [mm]
   const H_m = Math.max(H_cover, 0) / 1000; // dekking [m]
   const D_m = D_out / 1000;   // buitendiameter [m]
-  const HstarOverD = D_m > 0 ? H_m / D_m : 0;  // H_star/D ratio
+  const HstarOverD = D_m > 0 ? H_m / D_m : 0;  // Hstar/D ratio
   const isTrench = settings.installMethod === "trench_uncompressed" || settings.installMethod === "trench_compressed";
   const isHDD = settings.installMethod === "hdd";
   const isNEN2020 = settings.nenVersion === "2020";
@@ -444,7 +444,7 @@ export function calcSoilParametersAtNode(
       } else {
         // Sleuf installatie
         // Vereenvoudigde NEN 3650-1:2020 C.4.3.2 benadering:
-        // m = 0.02 × H_star/D + 0.01 (verplaatsingsfactor)
+        // m = 0.02 × Hstar/D + 0.01 (verplaatsingsfactor)
         // kv,top ≈ RVT / (m × D)
         const mFactor = 0.02 * HstarOverD + 0.01;
         // RVT wordt later berekend, gebruik hier een geschatte waarde
@@ -502,20 +502,19 @@ export function calcSoilParametersAtNode(
     }
   }
 
+  // ═══ NEN 2020 modelfactoren (gebruikt in RH en KLH) ═══
+  const modelFactorKq = isNEN2020 ? 1.00 : 1.00;
+  const modelFactorKc = isNEN2020 ? 0.85 : 1.00;
+
   // ═══ 7. RH — Maximale horizontale grondreactie ═══
   // NEN 3650-1:2020 C.4.4: Kq/Kc functies
   // Zandig of kleiig langzame vervorming: Qhor = (Kq × σk + α × Kc × c') × D
   // Kleiig snelle vervorming: Qhor = Kcu × cu × D
   // NEN 2020 modelfactoren: 1.00 voor Kq, 0.85 voor Kc en Kcu
-  const modelFactorKq = isNEN2020 ? 1.00 : 1.00;
-  const modelFactorKc = isNEN2020 ? 0.85 : 1.00;
-
   {
     const phiRH = weightedAvgPerCategory(layersGLtoBot.map(l => ({ value: l.phi, thickness: l.thickness, category: l.category })));
     const cRH = weightedAvgPerCategory(layersGLtoBot.map(l => ({ value: l.cDrained, thickness: l.thickness, category: l.category })));
     const cuRH = weightedAvgPerCategory(layersGLtoBot.map(l => ({ value: l.cUndrained, thickness: l.thickness, category: l.category })));
-    
-    // modelFactors moved to outer scope
     
     var RH_sand = 0, RH_clay = 0;
     

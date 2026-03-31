@@ -3872,7 +3872,7 @@ function PLECalculator() {
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <div>
                 <div style={{ fontSize: mobile?13:14, fontWeight: 700, letterSpacing: -0.5 }}>PLE Calculator</div>
-                {!mobile && <div style={{ fontSize: 11, color: css.dim }}>Pipeline Engineering — NEN 3650-2  •  v0.2.1  •  v0.2.0</div>}
+                {!mobile && <div style={{ fontSize: 11, color: css.dim }}>Pipeline Engineering — NEN 3650-2  •  v0.2.3  •  v0.2.0</div>}
               </div>
               {/* Bestandsnaam indicator + download knop */}
               {importFileName && (
@@ -3936,7 +3936,16 @@ function PLECalculator() {
                         ["SUPANG",   "ED7D31"],
                         // Blauw = secties
                         ["SECTION",  "4472C4"],
-                        // Bruin = grondparameters (Soil Wizard output)
+                        // Bruin = grondparameters (Soil Wizard output, PLE4Win DF3.2 formaat)
+                        ["KLH",      "8B4513"],
+                        ["KLS",      "8B4513"],
+                        ["KLT",      "8B4513"],
+                        ["RVS",      "8B4513"],
+                        ["RVT",      "8B4513"],
+                        ["RH",       "8B4513"],
+                        ["F",        "8B4513"],
+                        ["UF",       "8B4513"],
+                        ["SOILNB",   "8B4513"],
                         ["GENSOIL",  "8B4513"],
                       ];
                       
