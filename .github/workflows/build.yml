@@ -50,7 +50,6 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx electron-builder --win --x64 --publish always
 
-
   publish:
     needs: [build-mac, build-windows]
     runs-on: ubuntu-latest
@@ -60,7 +59,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Publish release (remove draft)
         env:
-          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG=\${GITHUB_REF#refs/tags/}
-          gh release edit "\$TAG" --draft=false --latest
+          TAG=${GITHUB_REF#refs/tags/}
+          gh release edit "$TAG" --draft=false --latest
