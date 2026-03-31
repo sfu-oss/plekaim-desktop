@@ -16,7 +16,7 @@ function getArg(name) {
 }
 
 const email = getArg('email');
-const plan = getArg('plan') || 'pro';           // pro | basic | trial
+const plan = getArg('plan') || 'pro';
 const days = parseInt(getArg('days') || '365');
 const name = getArg('name') || '';
 
@@ -25,37 +25,20 @@ if (!email) {
   process.exit(1);
 }
 
-// Load private key
-const privPem = fs.readFileSync(path.join(__dirname, 'private.pem'), 'utf-8');
-const privateKey = crypto.createPrivateKey(privPem);
+// Load secret for HMAC
+const secret = fs.readFileSync(path.join(__dirname, 'private.pem'), 'utf-8');
 
-// Build license payload
-const now = new Date();
-const expiresAt = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
+const expiresAt = new Date(Date.now() + days * 86400000);
+const expiryStr = expiresAt.toISOString().split('T')[0].replace(/-/g, '');
 
-const payload = {
-  v: 1,                                          // license format version
-  email,
-  name,
-  plan,
-  issuedAt: now.toISOString(),
-  expiresAt: expiresAt.toISOString(),
-  id: crypto.randomUUID(),                       // unique license ID
-};
-
-const payloadB64 = Buffer.from(JSON.stringify(payload)).toString('base64url');
-
-// Sign with Ed25519
-const signature = crypto.sign(null, Buffer.from(payloadB64), privateKey);
-const sigB64 = signature.toString('base64url');
-
-// Final license key: KAIM-<payload>.<signature>
-const licenseKey = `KAIM-${payloadB64}.${sigB64}`;
+// Generate short key: KAIM-PLAN-YYYYMMDD-HASH
+const data = [plan, expiryStr, email].join('|');
+const hmac = crypto.createHmac('sha256', secret).update(data).digest('base64url').slice(0, 16);
+const licenseKey = `KAIM-${plan.toUpperCase()}-${expiryStr}-${hmac}`;
 
 console.log('\n━━━ KaimPLE License ━━━');
 console.log(`Email:   ${email}`);
 console.log(`Name:    ${name || '(not set)'}`);
 console.log(`Plan:    ${plan}`);
 console.log(`Valid:   ${days} days (until ${expiresAt.toISOString().split('T')[0]})`);
-console.log(`ID:      ${payload.id}`);
-console.log(`\nLicense Key:\n${licenseKey}\n`);
+console.log(`\nLicense Key: ${licenseKey}\n`);

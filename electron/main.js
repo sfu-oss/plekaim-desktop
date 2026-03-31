@@ -134,7 +134,8 @@ async function promptLicenseKey() {
   <div class="container">
     <h2>🔑 Licentie Activatie</h2>
     <p>Voer je KaimPLE licentiesleutel in om de software te activeren.</p>
-    <input id="key" type="text" placeholder="KAIM-xxxx..." autofocus />
+    <input id="email" type="email" placeholder="je@email.com" style="margin-bottom:8px" />
+    <input id="key" type="text" placeholder="KAIM-PRO-20270331-xxxx" autofocus />
     <div class="error" id="error"></div>
     <div class="success" id="success"></div>
     <button class="btn btn-primary" id="activate" onclick="activate()">Activeren</button>
@@ -147,7 +148,9 @@ async function promptLicenseKey() {
       if (!key) return;
       document.getElementById('error').style.display = 'none';
       document.getElementById('activate').textContent = 'Valideren...';
-      ipcRenderer.send('license-activate', key);
+      const email = document.getElementById('email').value.trim();
+      if (!email) { document.getElementById('error').textContent = 'Vul je email in'; document.getElementById('error').style.display = 'block'; return; }
+      ipcRenderer.send('license-activate', { key, email });
     }
     document.getElementById('key').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') activate();
@@ -172,11 +175,12 @@ async function promptLicenseKey() {
   activationWin.setMenuBarVisibility(false);
 
   return new Promise((resolve) => {
-    ipcMain.once('license-activate', (event, key) => {
-      const result = validateKey(key);
+    ipcMain.once('license-activate', (event, data) => {
+      const { key, email } = data;
+      const result = validateKey(key, email);
       if (result.valid) {
-        saveLicense(key);
-        log.info(`License activated: ${result.payload.email} (${result.payload.plan}, expires ${result.payload.expiresAt})`);
+        saveLicense(key, email);
+        log.info(`License activated: ${email} (${result.payload.plan}, expires ${result.payload.expiresAt})`);
       }
       event.sender.send('license-result', result);
     });
@@ -203,22 +207,20 @@ const ADMIN_EMAILS = ['skuu@kaimple.com', 'desktop@kaimple.com', 'admin@kaimple.
 const PRIVATE_KEY_PATH = path.join(__dirname, '..', 'license-tools', 'private.pem');
 
 ipcMain.handle('generate-license', async (event, payload) => {
-  // Check if private key exists (only on admin machines)
   const fs = require('fs');
   if (!fs.existsSync(PRIVATE_KEY_PATH)) {
     throw new Error('Private key niet gevonden. Alleen beschikbaar op admin machines.');
   }
   
   const crypto = require('crypto');
-  const privPem = fs.readFileSync(PRIVATE_KEY_PATH, 'utf-8');
-  const privateKey = crypto.createPrivateKey(privPem);
+  const secret = fs.readFileSync(PRIVATE_KEY_PATH, 'utf-8');
   
-  const payloadB64 = Buffer.from(JSON.stringify(payload)).toString('base64url');
-  const signature = crypto.sign(null, Buffer.from(payloadB64), privateKey);
-  const sigB64 = signature.toString('base64url');
+  const expiryStr = payload.expiresAt.split('T')[0].replace(/-/g, '');
+  const data = [payload.plan, expiryStr, payload.email].join('|');
+  const hmac = crypto.createHmac('sha256', secret).update(data).digest('base64url').slice(0, 16);
+  const licenseKey = 'KAIM-' + payload.plan.toUpperCase() + '-' + expiryStr + '-' + hmac;
   
-  const licenseKey = `KAIM-${payloadB64}.${sigB64}`;
-  log.info(`License generated for ${payload.email} (${payload.plan}, expires ${payload.expiresAt})`);
+  log.info('License generated for ' + payload.email + ' (' + payload.plan + ', expires ' + payload.expiresAt + ')');
   return licenseKey;
 });
 

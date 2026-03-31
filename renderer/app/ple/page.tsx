@@ -3529,13 +3529,10 @@ function PLECalculator() {
       // Use Web Crypto API with the same Ed25519 approach
       // For desktop: call Electron IPC to generate with private key
       const payload = {
-        v: 1,
         email: adminEmail,
         name: adminName,
         plan: adminPlan,
-        issuedAt: new Date().toISOString(),
         expiresAt: new Date(Date.now() + parseInt(adminDays) * 86400000).toISOString(),
-        id: crypto.randomUUID(),
       };
       // Send to main process for signing
       if (typeof window !== "undefined" && (window as any).electronAPI?.generateLicense) {
