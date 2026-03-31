@@ -351,6 +351,8 @@ function createWindow() {
     minWidth: 1200,
     minHeight: 800,
     backgroundColor: '#0b1020',
+    title: 'KaimPLE Desktop',
+    icon: path.join(__dirname, '..', 'assets', 'icon.png'),
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,

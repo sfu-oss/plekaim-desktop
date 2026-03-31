@@ -982,6 +982,11 @@ function useIsMobile() {
 }
 
 // ============================================================
+// Version — single source of truth (update here for new releases)
+// ============================================================
+const APP_VERSION = "0.2.8";
+
+// ============================================================
 // Shared Styles
 // ============================================================
 const css = {
@@ -1204,18 +1209,36 @@ const ROADMAP_STEPS: RoadmapStep[] = [
   { id: "report",    label: "Rapportage",           icon: "📄", tab: "report",   required: false, description: "PDF export" },
 ];
 
+// Professional SVG tab icons (16×16, stroke-based, currentColor)
+const TabIcon = ({ id, size = 14 }: { id: string; size?: number }) => {
+  const s = { width: size, height: size, flexShrink: 0 } as const;
+  const p = { xmlns: "http://www.w3.org/2000/svg", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round" as const, strokeLinejoin: "round" as const, style: s };
+  switch (id) {
+    case "input": return <svg {...p}><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>;
+    case "import": return <svg {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>;
+    case "soil": return <svg {...p}><path d="M2 22 L22 22"/><path d="M2 18 Q7 15 12 18 Q17 21 22 18"/><path d="M2 14 Q7 11 12 14 Q17 17 22 14"/><circle cx="12" cy="8" r="3"/><line x1="12" y1="5" x2="12" y2="2"/></svg>;
+    case "model3d": return <svg {...p}><path d="M12 3 L21 8 L21 16 L12 21 L3 16 L3 8 Z"/><path d="M12 12 L21 8"/><path d="M12 12 L12 21"/><path d="M12 12 L3 8"/></svg>;
+    case "results": return <svg {...p}><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>;
+    case "diagrams": return <svg {...p}><path d="M3 3v18h18"/><path d="M7 16 L11 11 L15 14 L20 8"/></svg>;
+    case "tekening": return <svg {...p}><path d="M2 20h20"/><path d="M5 20V8l7-5 7 5v12"/><path d="M9 20v-5h6v5"/><path d="M9 12h.01"/><path d="M15 12h.01"/></svg>;
+    case "nen3650": return <svg {...p}><path d="M9 12 L11 14 L15 10"/><path d="M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"/></svg>;
+    case "report": return <svg {...p}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>;
+    case "admin": return <svg {...p}><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>;
+    default: return null;
+  }
+};
+
 const TABS = [
-  { id: "input", label: "Invoer", icon: "⚙️" },
-  { id: "import", label: "Import", icon: "⬆️" },
-  { id: "soil", label: "Grond", icon: "🏔️" },
-  { id: "model3d", label: "3D Model", icon: "🧊" },
-  { id: "results", label: "Resultaten", icon: "📊" },
-  { id: "diagrams", label: "Diagrammen", icon: "📈" },
-  { id: "tekening", label: "Tekening", icon: "📐" },
-  { id: "nen3650", label: "NEN 3650", icon: "✅" },
-  { id: "report", label: "Rapport", icon: "📄" },
-  { id: "dhstress", label: "DHStress", icon: "🔥" },
-  { id: "admin", label: "Admin", icon: "🛡️" },
+  { id: "input", label: "Invoer" },
+  { id: "import", label: "Import" },
+  { id: "soil", label: "Grond" },
+  { id: "model3d", label: "3D Model" },
+  { id: "results", label: "Resultaten" },
+  { id: "diagrams", label: "Diagrammen" },
+  { id: "tekening", label: "Tekening" },
+  { id: "nen3650", label: "NEN 3650" },
+  { id: "report", label: "Rapport" },
+  { id: "admin", label: "Admin" },
 ];
 
 // ============================================================
@@ -1228,7 +1251,7 @@ function PLECalculator() {
   const [tab, setTab] = useState("input");
 
   const isAdmin = Boolean(session?.user?.isAdmin);
-  const tabs = useMemo(() => (isAdmin ? TABS : TABS.filter(t => t.id !== "dhstress")), [isAdmin]);
+  const tabs = useMemo(() => (isAdmin ? TABS : TABS.filter(t => t.id !== "admin")), [isAdmin]);
 
   useEffect(() => {
     const api = (window as any).electronAPI; if (api?.importsList) { api.importsList().then((d: any) => setSavedImports(d?.items || [])).catch(() => {}); }
@@ -1251,6 +1274,8 @@ function PLECalculator() {
   const [diagramHover, setDiagramHover] = useState<number | null>(null);
   const [savedImports, setSavedImports] = useState<any[]>([]);
   const [pleModel, setPleModel] = useState<PleModel | null>(null);
+  const [femCalculating, setFemCalculating] = useState(false);
+  const [femProgressPct, setFemProgressPct] = useState(0);
 
   // ============================================================
   // Persist import data in localStorage (overleeft page refresh)
@@ -1468,6 +1493,12 @@ function PLECalculator() {
 
     let femMeta: any = {};
 
+    setFemCalculating(true);
+    setFemProgressPct(10);
+    // Allow UI to repaint before heavy computation
+    await new Promise(r => setTimeout(r, 50));
+    setFemProgressPct(25);
+
     if (lcList.length > 1) {
       const result = solveAllLoadCases(
         femNodes, parsed.elements, mat, PiVal, ToperVal, TinstallVal,
@@ -1475,6 +1506,7 @@ function PLECalculator() {
         undefined, undefined, // designFactor, gammaM
         teeSpecsArg, teeNodeMapArg,
       );
+      setFemProgressPct(80);
       setFemResults(result.envelope);
       setFemAllLC(result.perLC.map((r: any, i: number) => ({
         lc: lcList[i]?.lc || i + 1, results: r.nodeResults,
@@ -1514,6 +1546,7 @@ function PLECalculator() {
         teeSpecs: teeSpecsArg,
         teeNodeMap: teeNodeMapArg,
       });
+      setFemProgressPct(80);
       setFemResults(result.nodeResults);
       setFemAllLC([{ lc: lcList[0]?.lc || 1, results: result.nodeResults }]);
       femMeta = {
@@ -1531,6 +1564,10 @@ function PLECalculator() {
         _localBuckled: result.localBuckledCount,
       };
     }
+    setFemProgressPct(100);
+    await new Promise(r => setTimeout(r, 300));
+    setFemCalculating(false);
+    setFemProgressPct(0);
     return { femMeta, soilSprings: soilArg };
   };
 
@@ -2671,7 +2708,7 @@ function PLECalculator() {
       </div>
       <div style={{ marginTop: 16, padding: 12, background: "rgba(30,41,59,0.25)", borderRadius: 8, fontSize: 10, color: css.faint, fontFamily: css.mono, lineHeight: 1.8 }}>
         Rapport: {new Date().toLocaleDateString("nl-NL")} {new Date().toLocaleTimeString("nl-NL")}<br/>
-        PLE Calculator v2.0 — NEN 3650-2:2020 — FEM Solver<br/>
+        PLE Calculator v${APP_VERSION} — NEN 3650-2:2020 — FEM Solver<br/>
         Disclaimer: Indicatief. Gebruik gecertificeerde software voor definitief ontwerp.
       </div>
 
@@ -2718,7 +2755,7 @@ function PLECalculator() {
             const addSep = () => { doc.setDrawColor(200); doc.line(margin, y, pageW - margin, y); y += 4; };
 
             // Header
-            addLine("PLE Calculator — Spanningsrapport", 16, true, [30, 80, 200]);
+            addLine("KaimPLE — Spanningsrapport", 16, true, [30, 80, 200]);
             addLine(`Datum: ${new Date().toLocaleDateString("nl-NL")} ${new Date().toLocaleTimeString("nl-NL")}`, 9);
             addLine("NEN 3650-2:2020 / EN 13941-1:2019 — FEM Stijfheidsmatrix Analyse", 9, false, [100, 100, 100]);
             y += 4; addSep();
@@ -2802,7 +2839,7 @@ function PLECalculator() {
             y += 4; addSep();
 
             // Footer
-            addLine("PLE Calculator v2.0 — FEM Stijfheidsmatrix Solver", 8, false, [150, 150, 150]);
+            addLine(`KaimPLE v${APP_VERSION} — FEM Stijfheidsmatrix Solver`, 8, false, [150, 150, 150]);
             addLine("Disclaimer: Indicatief resultaat. Gebruik gecertificeerde software voor definitief ontwerp.", 7, false, [150, 150, 150]);
 
             doc.save(`PLE_rapport_${new Date().toISOString().slice(0,10)}.pdf`);
@@ -3642,11 +3679,11 @@ function PLECalculator() {
       <div style={{ padding: mobile ? "8px 12px" : "8px 16px", background: "rgba(15,23,42,0.97)", borderBottom: `1px solid ${css.border}`, position: "sticky", top: 0, zIndex: 100, backdropFilter: "blur(12px)" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{ width: mobile?26:28, height: mobile?26:28, borderRadius: 8, background: "linear-gradient(135deg,#3b82f6,#1d4ed8)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: mobile?14:18, fontWeight: 800, color: "#fff", flexShrink: 0 }}>P</div>
+            <img src="/KaimPLE_512x512.png" alt="KaimPLE" style={{ width: mobile?26:30, height: mobile?26:30, borderRadius: 7, flexShrink: 0 }} onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <div>
-                <div style={{ fontSize: mobile?13:14, fontWeight: 700, letterSpacing: -0.5 }}>PLE Calculator</div>
-                {!mobile && <div style={{ fontSize: 11, color: css.dim }}>Pipeline Engineering — NEN 3650-2  •  v0.2.3  •  v0.2.0</div>}
+                <div style={{ fontSize: mobile?13:14, fontWeight: 700, letterSpacing: -0.5 }}><span style={{ color: "#22c55e" }}>Kaim</span><span style={{ color: css.text }}>PLE</span></div>
+                {!mobile && <div style={{ fontSize: 11, color: css.dim }}>Pipeline Engineering — NEN 3650-2 • v{APP_VERSION}</div>}
               </div>
               {/* Bestandsnaam indicator + download knop */}
               {importFileName && (
@@ -3759,12 +3796,6 @@ function PLECalculator() {
                   </button>
                 </div>
               )}
-              {isAdmin && (
-                <button onClick={() => console.log("navigate")} style={{ display: "flex", alignItems: "center", gap: 8, padding: mobile?"4px 8px":"6px 12px", background: "rgba(59,130,246,0.1)", border: `1px solid ${css.border}`, borderRadius: 8, cursor: "pointer" }}>
-                  <div style={{ width: mobile?22:26, height: mobile?22:26, borderRadius: 6, background: "linear-gradient(135deg,#3b82f6,#1d4ed8)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: mobile?10:12, fontWeight: 800, color: "#fff" }}>DH</div>
-                  {!mobile && <span style={{ fontSize: 12, fontWeight: 700, color: css.text }}>DHStress</span>}
-                </button>
-              )}
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -3781,15 +3812,20 @@ function PLECalculator() {
             </div>
           </div>
         </div>
+        {/* FEM Calculation Progress Bar */}
+        {femCalculating && (
+          <div style={{ height: 3, background: css.border, overflow: "hidden", marginTop: 4 }}>
+            <div style={{ height: "100%", background: femProgressPct >= 100 ? css.green : css.accent, borderRadius: 2, width: `${femProgressPct}%`, transition: "width 0.3s ease-out" }} />
+          </div>
+        )}
         {/* Desktop tabs */}
         {!mobile && (
-          <div style={{ display: "flex", gap: 1, marginTop: 6 }}>
+          <div style={{ display: "flex", gap: 1, marginTop: femCalculating ? 3 : 6 }}>
             {tabs.map(tb => (
               <button key={tb.id} onClick={() => {
-                if (tb.id === "dhstress") { console.log("navigate"); return; }
                 setTab(tb.id);
-              }} style={{ padding: "5px 10px", border: "none", borderRadius: "5px 5px 0 0", background: tab===tb.id?css.border:"transparent", color: tab===tb.id?css.text:css.dim, fontSize: 11, fontWeight: tab===tb.id?600:400, cursor: "pointer", display: "flex", alignItems: "center", gap: 3, fontFamily: css.sans }}>
-                <span style={{ fontSize: 11 }}>{tb.icon}</span>{tb.label}
+              }} style={{ padding: "5px 10px", border: "none", borderRadius: "5px 5px 0 0", background: tab===tb.id?css.border:"transparent", color: tab===tb.id?css.text:css.dim, fontSize: 11, fontWeight: tab===tb.id?600:400, cursor: "pointer", display: "flex", alignItems: "center", gap: 4, fontFamily: css.sans, transition: "color 0.15s" }}>
+                <TabIcon id={tb.id} size={13} />{tb.label}
               </button>
             ))}
           </div>
@@ -3812,10 +3848,9 @@ function PLECalculator() {
         <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 200, background: "rgba(15,23,42,0.98)", borderTop: `1px solid ${css.border}`, display: "flex", backdropFilter: "blur(12px)", paddingBottom: "env(safe-area-inset-bottom, 0px)" }}>
           {tabs.map(tb => (
             <button key={tb.id} onClick={() => {
-              if (tb.id === "dhstress") { console.log("navigate"); return; }
               setTab(tb.id);
             }} style={{ flex: 1, border: "none", background: "transparent", padding: "8px 0 6px", display: "flex", flexDirection: "column", alignItems: "center", gap: 2, cursor: "pointer", color: tab===tb.id?css.accent:css.dim, transition: "color 0.15s" }}>
-              <span style={{ fontSize: 18 }}>{tb.icon}</span>
+              <TabIcon id={tb.id} size={18} />
               <span style={{ fontSize: 9, fontWeight: tab===tb.id?600:400, fontFamily: css.sans }}>{tb.label}</span>
             </button>
           ))}
