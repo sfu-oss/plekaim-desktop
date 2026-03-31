@@ -1422,7 +1422,12 @@ function PLECalculator() {
 
       case "boundary":
         if (!hasImport) return "empty";
+        // Complete als endptsMap OF supportList OF connects aanwezig is
         if (importedMeta?.endptsMap && Object.keys(importedMeta.endptsMap).length > 0) return "complete";
+        if (importedMeta?.supportList && importedMeta.supportList.length > 0) return "complete";
+        if (importedMeta?.connects && importedMeta.connects.length > 0) return "complete";
+        // Als er FEM resultaten zijn, is het model compleet genoeg
+        if (femResults.length > 0) return "complete";
         return "partial";
 
       case "loading":
@@ -2232,7 +2237,7 @@ function PLECalculator() {
                 sigmaK: p.sigmaK,
                 H_cover: p.H_cover,
               }));
-              setSoilWizardResults(results);
+              setSoilWizardResults(results); alert(`✅ Soil Wizard: ${results.length} nodes berekend en toegepast op solver`);
               // Sla ook op in pleModel als die beschikbaar is
               if (pleModel) {
                 setPleModel({ ...pleModel, soilWizardResults: results });
@@ -2925,7 +2930,7 @@ function PLECalculator() {
           <div key={it.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 10px", borderBottom: `1px solid ${css.border}` }}>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.filename}</div>
-              <div style={{ fontSize: 10, color: css.dim }}>{new Date(it.createdAt).toLocaleString("nl-NL")}</div>
+              <div style={{ fontSize: 10, color: css.dim }}>{new Date(it.date || it.createdAt || Date.now()).toLocaleString("nl-NL")}</div>
             </div>
             <div style={{ display: "flex", gap: 6, alignItems: "center", flexShrink: 0 }}>
               <button onClick={async ()=>{
@@ -2933,9 +2938,13 @@ function PLECalculator() {
                   // Wis eerst alle oude model state
                   clearImportData();
 
-                  const res = { ok: true, json: async () => await (window as any).electronAPI?.importsGet?.(it.id) || null } as any;
-                  const blob = await res.blob();
-                  const file = new File([blob], it.filename, { type: blob.type });
+                  const importData = await (window as any).electronAPI?.importsGet?.(it.id);
+                  if (!importData?.data) throw new Error("Geen data gevonden");
+                  const binary = atob(importData.data);
+                  const bytes = new Uint8Array(binary.length);
+                  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+                  const blob = new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+                  const file = new File([blob], it.filename || importData.name || "import.xlsx");
                   const parsed = await parsePLEFile(file);
                   setImportedNodes(parsed.nodes);
                   setImportedEls(parsed.elements);
