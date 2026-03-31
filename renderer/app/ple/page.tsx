@@ -3520,11 +3520,11 @@ function PLECalculator() {
   // ============================================================
   const roadmapSidebar = (
     <div style={{
-      width: mobile ? "100%" : 220,
+      width: mobile ? "100%" : 170,
       background: "rgba(15,23,42,0.6)",
       borderRight: mobile ? "none" : `1px solid ${css.border}`,
       borderBottom: mobile ? `1px solid ${css.border}` : "none",
-      padding: mobile ? "8px 12px" : "16px 12px",
+      padding: mobile ? "8px 10px" : "10px 8px",
       flexShrink: 0,
       overflowY: "auto",
     }}>
@@ -3568,11 +3568,11 @@ function PLECalculator() {
                 style={{
                   display: "flex",
                   alignItems: mobile ? "center" : "flex-start",
-                  gap: mobile ? 4 : 8,
-                  padding: mobile ? "4px 8px" : "8px 10px",
+                  gap: mobile ? 3 : 6,
+                  padding: mobile ? "3px 6px" : "5px 8px",
                   background: isActive ? "rgba(59,130,246,0.1)" : "transparent",
                   border: isActive ? `1px solid rgba(59,130,246,0.25)` : "1px solid transparent",
-                  borderRadius: 8,
+                  borderRadius: 6,
                   cursor: isLocked ? "not-allowed" : "pointer",
                   opacity: isLocked ? 0.4 : 1,
                   textAlign: "left",
@@ -3586,10 +3586,10 @@ function PLECalculator() {
                 {!mobile && i < ROADMAP_STEPS.length - 1 && (
                   <div style={{
                     position: "absolute",
-                    left: 19,
-                    top: 36,
+                    left: 15,
+                    top: 28,
                     width: 2,
-                    height: 10,
+                    height: 6,
                     background: getStepStatus(ROADMAP_STEPS[i + 1].id) === "locked" ? css.border : color,
                     opacity: 0.4,
                   }} />
@@ -3597,15 +3597,15 @@ function PLECalculator() {
 
                 {/* Status indicator */}
                 <div style={{
-                  width: mobile ? 18 : 22,
-                  height: mobile ? 18 : 22,
+                  width: mobile ? 16 : 18,
+                  height: mobile ? 16 : 18,
                   borderRadius: "50%",
                   border: `2px solid ${color}`,
                   background: status === "complete" ? color : "transparent",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  fontSize: mobile ? 9 : 11,
+                  fontSize: mobile ? 8 : 9,
                   fontWeight: 700,
                   color: status === "complete" ? "#fff" : color,
                   flexShrink: 0,
@@ -3617,7 +3617,7 @@ function PLECalculator() {
                 {/* Label + beschrijving (desktop only voor beschrijving) */}
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{
-                    fontSize: mobile ? 10 : 12,
+                    fontSize: mobile ? 9 : 11,
                     fontWeight: isActive ? 700 : 500,
                     color: isActive ? css.accent : isLocked ? css.faint : css.text,
                     whiteSpace: "nowrap",
@@ -3628,7 +3628,7 @@ function PLECalculator() {
                     {mobile ? step.icon : step.label}
                   </div>
                   {!mobile && (
-                    <div style={{ fontSize: 10, color: css.dim, marginTop: 1, lineHeight: 1.3 }}>
+                    <div style={{ fontSize: 9, color: css.dim, marginTop: 0, lineHeight: 1.2 }}>
                       {step.description}
                     </div>
                   )}
@@ -3646,13 +3646,13 @@ function PLECalculator() {
       <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
 
       {/* HEADER */}
-      <div style={{ padding: mobile ? "10px 14px" : "12px 24px", background: "rgba(15,23,42,0.97)", borderBottom: `1px solid ${css.border}`, position: "sticky", top: 0, zIndex: 100, backdropFilter: "blur(12px)" }}>
+      <div style={{ padding: mobile ? "8px 12px" : "8px 16px", background: "rgba(15,23,42,0.97)", borderBottom: `1px solid ${css.border}`, position: "sticky", top: 0, zIndex: 100, backdropFilter: "blur(12px)" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{ width: mobile?30:36, height: mobile?30:36, borderRadius: 8, background: "linear-gradient(135deg,#3b82f6,#1d4ed8)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: mobile?14:18, fontWeight: 800, color: "#fff", flexShrink: 0 }}>P</div>
+            <div style={{ width: mobile?26:28, height: mobile?26:28, borderRadius: 8, background: "linear-gradient(135deg,#3b82f6,#1d4ed8)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: mobile?14:18, fontWeight: 800, color: "#fff", flexShrink: 0 }}>P</div>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <div>
-                <div style={{ fontSize: mobile?14:16, fontWeight: 700, letterSpacing: -0.5 }}>PLE Calculator</div>
+                <div style={{ fontSize: mobile?13:14, fontWeight: 700, letterSpacing: -0.5 }}>PLE Calculator</div>
                 {!mobile && <div style={{ fontSize: 11, color: css.dim }}>Pipeline Engineering — NEN 3650-2</div>}
               </div>
               {/* Bestandsnaam indicator + download knop */}
@@ -3779,13 +3779,13 @@ function PLECalculator() {
         </div>
         {/* Desktop tabs */}
         {!mobile && (
-          <div style={{ display: "flex", gap: 2, marginTop: 10 }}>
+          <div style={{ display: "flex", gap: 1, marginTop: 6 }}>
             {tabs.map(tb => (
               <button key={tb.id} onClick={() => {
                 if (tb.id === "dhstress") { console.log("navigate"); return; }
                 setTab(tb.id);
-              }} style={{ padding: "7px 16px", border: "none", borderRadius: "6px 6px 0 0", background: tab===tb.id?css.border:"transparent", color: tab===tb.id?css.text:css.dim, fontSize: 13, fontWeight: tab===tb.id?600:400, cursor: "pointer", display: "flex", alignItems: "center", gap: 5, fontFamily: css.sans }}>
-                <span style={{ fontSize: 13 }}>{tb.icon}</span>{tb.label}
+              }} style={{ padding: "5px 10px", border: "none", borderRadius: "5px 5px 0 0", background: tab===tb.id?css.border:"transparent", color: tab===tb.id?css.text:css.dim, fontSize: 11, fontWeight: tab===tb.id?600:400, cursor: "pointer", display: "flex", alignItems: "center", gap: 3, fontFamily: css.sans }}>
+                <span style={{ fontSize: 11 }}>{tb.icon}</span>{tb.label}
               </button>
             ))}
           </div>
@@ -3798,7 +3798,7 @@ function PLECalculator() {
         {roadmapSidebar}
 
         {/* CONTENT */}
-        <div style={{ flex: 1, padding: mobile?12:24, maxWidth: 1200, minWidth: 0 }}>
+        <div style={{ flex: 1, padding: mobile?10:16, maxWidth: 1200, minWidth: 0 }}>
           {tabContent[tab]}
         </div>
       </div>
