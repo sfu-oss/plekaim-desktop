@@ -802,10 +802,18 @@ export default function Ple3DViewer({
     if (!renderer) return;
     try {
       const canvas = renderer.domElement;
-      const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, "image/png"));
-      if (blob) {
-        await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+      const dataUrl = canvas.toDataURL("image/png");
+      const api = (window as any).electronAPI;
+      if (api?.copyImageToClipboard) {
+        api.copyImageToClipboard(dataUrl);
         alert("3D view gekopieerd naar clipboard");
+      } else {
+        // Fallback: browser API
+        const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, "image/png"));
+        if (blob) {
+          await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+          alert("3D view gekopieerd naar clipboard");
+        }
       }
     } catch { alert("Kopiëren mislukt — gebruik Export"); }
   }, []);
