@@ -1418,8 +1418,14 @@ function PLECalculator() {
         if (!hasImport && !femResults.length) return "locked";
         return n.ok ? "complete" : "error";
 
-      case "report":
+      case "report": {
+        // Rapportage is complete als alle andere stappen (excl. report) complete zijn
+        const otherSteps = ROADMAP_STEPS.filter(s => s.id !== "report");
+        const doneCount = otherSteps.filter(s => getStepStatus(s.id) === "complete").length;
+        if (doneCount >= otherSteps.length) return "complete";
+        if (doneCount >= Math.ceil(otherSteps.length / 2)) return "partial";
         return "empty";
+      }
     }
     return "empty";
   };
