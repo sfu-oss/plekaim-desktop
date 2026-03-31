@@ -137,18 +137,28 @@ export interface SoilParameters {
 function deg2rad(deg: number): number { return deg * Math.PI / 180; }
 
 /**
- * Berekent effectieve Young's modulus (NEN 3650-1:2020)
+ * Berekent effectieve Young's modulus (NEN 3650-1:2020 B.4.1)
  * Eeff = E100 × (σv' / 100)^m
- *   m = 0.5 voor zandig, 0.8 voor kleiig
+ *   m = 0.5 voor zandig (gravel/sand/loam), m = 0.8 voor kleiig (clay/peat)
  */
 function calcEffectiveE(E100: number, sigmaV_kPa: number, category: "sand" | "clay"): number {
   const m = category === "sand" ? 0.5 : 0.8;
-  if (sigmaV_kPa <= 0) return E100;
-  return E100 * Math.pow(sigmaV_kPa / 100, m);
+  if (sigmaV_kPa <= 0 || E100 <= 0) return E100;
+  return E100 * Math.pow(Math.max(sigmaV_kPa, 1) / 100, m);
 }
 
 /**
- * Berekent korrelspanning op buisas-niveau
+ * Berekent effectieve hoek van inwendige wrijving (NEN 3650-1:2020)
+ * Voor zandige grondsoorten: φ_eff via Eeff
+ * φ_eff = φ_ref × (Eeff / E100)^0.15
+ */
+function calcEffectivePhi(phi: number, E100: number, Eeff: number): number {
+  if (E100 <= 0 || Eeff <= 0) return phi;
+  return phi * Math.pow(Eeff / E100, 0.15);
+}
+
+/**
+ * Berekent korrelspanning op een bepaalde diepte
  * σk = Σ(γi × hi)  boven grondwater
  * σk = Σ(γi × hi) + Σ((γsat,j - γw) × hj)  onder grondwater
  */
@@ -168,10 +178,9 @@ function calcSigmaK(
     const h = effectiveBot - effectiveTop;
     
     if (waterDepth !== null && effectiveBot > waterDepth) {
-      // Deels of geheel onder water
       const hAboveWater = Math.max(0, waterDepth - effectiveTop);
       const hBelowWater = h - hAboveWater;
-      sigma += layer.gamma * hAboveWater / 1000;  // kN/m³ × m = kN/m²
+      sigma += layer.gamma * hAboveWater / 1000;  // kN/m³ × m → kN/m²
       sigma += (layer.gammaSat - gammaW) * hBelowWater / 1000;
     } else {
       sigma += layer.gamma * h / 1000;
@@ -196,9 +205,111 @@ function weightedAvg(
 }
 
 /**
- * Berekent alle grondparameters voor één locatie
- * Conform NEN 3650-1:2020 bijlage C
+ * Per-categorie gewogen gemiddelde (PLE4Win methodiek)
+ * Berekent apart voor sand-groep en clay-groep, dan weegt naar laagdikte
  */
+function weightedAvgPerCategory(
+  layers: { value: number; thickness: number; category: "sand" | "clay" }[]
+): { sand: number; clay: number; combined: number; hSand: number; hClay: number } {
+  let sumSand = 0, hSand = 0, sumClay = 0, hClay = 0;
+  for (const l of layers) {
+    if (l.category === "sand") {
+      sumSand += l.value * l.thickness;
+      hSand += l.thickness;
+    } else {
+      sumClay += l.value * l.thickness;
+      hClay += l.thickness;
+    }
+  }
+  const avgSand = hSand > 0 ? sumSand / hSand : 0;
+  const avgClay = hClay > 0 ? sumClay / hClay : 0;
+  const hTotal = hSand + hClay;
+  const combined = hTotal > 0 ? (avgSand * hSand + avgClay * hClay) / hTotal : 0;
+  return { sand: avgSand, clay: avgClay, combined, hSand, hClay };
+}
+
+/* ─── NEN 3650 Kq en Kc functies (voor RH berekening) ─────────────────── */
+
+/**
+ * Nc functie van φ (NEN 3650-1:2020)
+ * Nc = (Nq - 1) × cot(φ)
+ * Nq = e^(π×tan(φ)) × tan²(45° + φ/2)
+ */
+function calcNc(phi_deg: number): number {
+  if (phi_deg <= 0) return 5.14;  // Limiet voor φ → 0 (Prandtl)
+  const phi = deg2rad(phi_deg);
+  const Nq = Math.exp(Math.PI * Math.tan(phi)) * Math.pow(Math.tan(Math.PI / 4 + phi / 2), 2);
+  return (Nq - 1) / Math.tan(phi);
+}
+
+function calcNq(phi_deg: number): number {
+  if (phi_deg <= 0) return 1;
+  const phi = deg2rad(phi_deg);
+  return Math.exp(Math.PI * Math.tan(phi)) * Math.pow(Math.tan(Math.PI / 4 + phi / 2), 2);
+}
+
+/**
+ * dc∞ functie van φ (NEN 3650-1:2020)
+ * dc∞ = 0.6 × (1 + 0.35 × φ_rad)  (in radialen)
+ */
+function calcDcInfin(phi_deg: number): number {
+  return 0.6 * (1 + 0.35 * deg2rad(phi_deg));
+}
+
+/**
+ * Kq functie: Kq(φ, H★/D) conform NEN 3650-1:2020
+ * Kq0 = Nq × exp(π × tan(φ))
+ * Kq∞ = Nc × dc∞ × Nq  (vereenvoudigd)
+ * Kq = Kq0 + (Kq∞ - Kq0) × (1 - exp(-αq × H_star/D))
+ */
+function calcKq(phi_deg: number, HstarOverD: number): number {
+  if (phi_deg <= 0.01) return 0;
+  const phi = deg2rad(phi_deg);
+  const Nq = Math.exp(Math.PI * Math.tan(phi)) * Math.pow(Math.tan(Math.PI / 4 + phi / 2), 2);
+  const Nc = calcNc(phi_deg);
+  const dcInf = calcDcInfin(phi_deg);
+  
+  // Kq0: ondiep (H_star/D → 0)
+  const Kq0 = Nq;
+  // Kq∞: diep (H_star/D → ∞)
+  const Kq_infin = Nc * dcInf * Nq;
+  // Overgangsparameter
+  const alphaQ = 0.2 + 0.01 * phi_deg;  // empirische benadering NEN 3650
+  
+  const Kq = Kq0 + (Kq_infin - Kq0) * (1 - Math.exp(-alphaQ * Math.max(HstarOverD, 0)));
+  return Math.max(Kq, Kq0);
+}
+
+/**
+ * Kc functie: Kc(φ, H★/D) conform NEN 3650-1:2020
+ * Analoog aan Kq maar voor cohesieve component
+ */
+function calcKc(phi_deg: number, HstarOverD: number): number {
+  const Nc = calcNc(phi_deg);
+  const dcInf = calcDcInfin(phi_deg);
+  
+  // Kc0: ondiep
+  const Kc0 = Nc;
+  // Kc∞: diep
+  const Kc_infin = Nc * dcInf;
+  // Overgangsparameter
+  const alphaC = 0.15 + 0.008 * phi_deg;
+  
+  return Kc0 + (Kc_infin - Kc0) * (1 - Math.exp(-alphaC * Math.max(HstarOverD, 0)));
+}
+
+/**
+ * Kcu: Kc met φ = 0 (voor ongedraineerde klei/veen, snelle vervorming)
+ */
+function calcKcu(HstarOverD: number): number {
+  return calcKc(0, HstarOverD);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   HOOFDBEREKENING — Alle grondparameters voor één locatie
+   Conform NEN 3650-1:2020 bijlage C + PLE4Win Soil Wizard methodiek
+   ═══════════════════════════════════════════════════════════════════════════ */
+
 export function calcSoilParametersAtNode(
   profile: SoilProfile,
   soilTypes: SoilType[],
@@ -211,9 +322,17 @@ export function calcSoilParametersAtNode(
   const r = D_out / 2;
   const H_cover = pipeAxisDepth - r;  // gronddekking boven buis [mm]
   const H_bottom = pipeAxisDepth + r; // diepte onderzijde buis [mm]
+  const H_m = Math.max(H_cover, 0) / 1000; // dekking [m]
+  const D_m = D_out / 1000;   // buitendiameter [m]
+  const HstarOverD = D_m > 0 ? H_m / D_m : 0;  // H_star/D ratio
+  const isTrench = settings.installMethod === "trench_uncompressed" || settings.installMethod === "trench_compressed";
+  const isHDD = settings.installMethod === "hdd";
+  const isNEN2020 = settings.nenVersion === "2020";
+  const alpha_install = isTrench ? 0.6 : 1.0;  // NEN 3650-1:2020 installatiefactor
   
   // Bouw effectieve lagenlijst op met grondtypen
-  const resolvedLayers: (SoilType & { thickness: number; topDepth: number; botDepth: number })[] = [];
+  type ResolvedLayer = SoilType & { thickness: number; topDepth: number; botDepth: number };
+  const resolvedLayers: ResolvedLayer[] = [];
   let depth = 0;
   for (const layer of profile.layers) {
     const st = soilTypes.find(s => s.id === layer.soilTypeId);
@@ -227,16 +346,17 @@ export function calcSoilParametersAtNode(
     depth += layer.thickness;
   }
   
-  // Als profiel niet diep genoeg is, verleng laatste laag
-  if (depth < H_bottom + 1000 && resolvedLayers.length > 0) {
+  // Profiel verlengen als niet diep genoeg (PLE4Win: tot 1.5×D onder buisas)
+  const minDepth = pipeAxisDepth + 1.5 * D_out;
+  if (depth < minDepth && resolvedLayers.length > 0) {
     const last = resolvedLayers[resolvedLayers.length - 1];
-    const extra = H_bottom + 1000 - depth;
+    const extra = minDepth - depth;
     last.thickness += extra;
     last.botDepth += extra;
   }
 
   // Helper: haal lagen op binnen een dieptebereik
-  const getLayersInRange = (top: number, bot: number) => {
+  const getLayersInRange = (top: number, bot: number): ResolvedLayer[] => {
     return resolvedLayers
       .filter(l => l.botDepth > top && l.topDepth < bot)
       .map(l => ({
@@ -245,102 +365,259 @@ export function calcSoilParametersAtNode(
       }));
   };
 
-  // ─── 1. Korrelspanning op buisas (σk) ───
+  // ═══ Stap 1: Korrelspanning op buisas (σk) ═══
   const layersToAxis = getLayersInRange(0, pipeAxisDepth);
   const sigmaK = calcSigmaK(
     layersToAxis.map(l => ({ gamma: l.gamma, gammaSat: l.gammaSat, thickness: l.thickness })),
-    pipeAxisDepth, waterDepth ? waterDepth : null, gammaW
+    pipeAxisDepth, waterDepth, gammaW
   );
 
-  // ─── 2. KLH — Horizontale grondveerstijfheid ───
-  // NEN 3650-1:2020 C.4.4: kh = 2 × σk' × Kph / D
-  // Kph = tan²(45° + φ/2) (Rankine passieve gronddrukcoëfficiënt)
-  const layersAtAxis = getLayersInRange(pipeAxisDepth - 200, pipeAxisDepth + 200);
-  const phiH = weightedAvg(layersAtAxis.map(l => ({ value: l.phi, thickness: l.thickness })));
-  const Kph = Math.pow(Math.tan(deg2rad(45 + phiH / 2)), 2);
-  const KLH = sigmaK > 0 ? (2 * sigmaK * Kph) / (D_out / 1000) : 0;
+  // ═══ Soil ranges conform PLE4Win ═══
+  // KLH: ground level → bottom of pipe
+  const layersGLtoBot = getLayersInRange(0, H_bottom);
+  // KLS: bottom of pipe → 1.5D below axis
+  const layersBelow = getLayersInRange(pipeAxisDepth, pipeAxisDepth + 1.5 * D_out);
+  // KLT: ground level → top of pipe
+  const layersAbove = getLayersInRange(0, Math.max(pipeAxisDepth - r, 0));
+  // F, RH: specifieke bereiken
+  const layersAtAxis = getLayersInRange(Math.max(0, pipeAxisDepth - 200), pipeAxisDepth + 200);
 
-  // ─── 3. KLS — Verticale neerwaartse stijfheid ───
-  // NEN 3650-1:2020 C.4.2: ks = E_eff / (D × (1 - ν²))
-  // Vereenvoudigd voor zand: ks ≈ E_eff × √(σv'/100) / D
-  const layersBelow = getLayersInRange(pipeAxisDepth, H_bottom + 500);
-  const E100_avg = weightedAvg(layersBelow.map(l => ({ value: l.E100, thickness: l.thickness })));
-  const catBelow = layersBelow.length > 0 && layersBelow[0].category === "clay" ? "clay" : "sand";
-  const Eeff_bottom = calcEffectiveE(E100_avg, sigmaK * 1000, catBelow); // σv in kPa
-  const KLS = Eeff_bottom / (D_out / 1000) * 0.5; // kN/m² (vereenvoudigd)
+  // ═══ Per-categorie parameters ═══
+  // PLE4Win berekent apart voor sand en clay, dan weegt naar laagdikte
+  const catLayersGLtoBot = layersGLtoBot.map(l => ({ ...l, value: 0, category: l.category }));
+  const hSandBot = catLayersGLtoBot.filter(l => l.category === "sand").reduce((s, l) => s + l.thickness, 0);
+  const hClayBot = catLayersGLtoBot.filter(l => l.category === "clay").reduce((s, l) => s + l.thickness, 0);
+  const hTotalBot = hSandBot + hClayBot;
 
-  // ─── 4. KLT — Verticale opwaartse stijfheid ───
-  // NEN 3650-1:2020 C.4.3.2: kv,top
-  const layersAbove = getLayersInRange(0, pipeAxisDepth - r);
-  const E100_above = weightedAvg(layersAbove.map(l => ({ value: l.E100, thickness: l.thickness })));
-  const catAbove = layersAbove.length > 0 && layersAbove[0].category === "clay" ? "clay" : "sand";
-  const Eeff_top = calcEffectiveE(E100_above, sigmaK * 500, catAbove);
-  
-  // Voor zandig: KLT ≈ Qp / (0.01 × D), met Qp = RVT
-  // Vereenvoudigd: KLT ≈ Eeff × 0.25 / D
-  const KLT = H_cover > 0 ? Eeff_top * 0.25 / (D_out / 1000) : 0;
+  // ═══ 2. KLH — Horizontale grondveerstijfheid ═══
+  // NEN 3650-1:2020: KLH = RH / (0.01 × D) (stijfheid = reactie bij 1% D verplaatsing)
+  // We berekenen RH eerst, dan KLH = RH / (0.01 × D_m)
+  // (wordt later ingevuld nadat RH berekend is)
 
-  // ─── 5. RVS — Draagkracht onderzijde ───
+  // ═══ 3. KLS — Verticale neerwaartse stijfheid ═══
+  // NEN 3650-1:2020 C.4.2.2
+  // Zandig (sleuf): KLS = Eeff / (D × (1 - ν²))  met ν = 0.3
+  // Zandig (niet-sleuf) + Kleiig: KLS = Eeff / D
+  {
+    const E100Below = weightedAvgPerCategory(layersBelow.map(l => ({ value: l.E100, thickness: l.thickness, category: l.category })));
+    const sigmaKAtBottom = calcSigmaK(
+      getLayersInRange(0, H_bottom).map(l => ({ gamma: l.gamma, gammaSat: l.gammaSat, thickness: l.thickness })),
+      H_bottom, waterDepth, gammaW
+    );
+    
+    var KLS_sand = 0, KLS_clay = 0;
+    if (E100Below.hSand > 0) {
+      const Eeff = calcEffectiveE(E100Below.sand, sigmaKAtBottom * 1000, "sand");
+      if (isTrench) {
+        KLS_sand = Eeff / (D_m * (1 - 0.3 * 0.3));  // met ν = 0.3
+      } else {
+        KLS_sand = Eeff / D_m;
+      }
+    }
+    if (E100Below.hClay > 0) {
+      const Eeff = calcEffectiveE(E100Below.clay, sigmaKAtBottom * 1000, "clay");
+      KLS_clay = Eeff / D_m;
+    }
+    var KLS = hTotalBot > 0 
+      ? (KLS_sand * E100Below.hSand + KLS_clay * E100Below.hClay) / (E100Below.hSand + E100Below.hClay || 1) 
+      : 0;
+  }
+
+  // ═══ 4. KLT — Verticale opwaartse stijfheid ═══
+  // NEN 3650-1:2020 C.4.3.2
+  // Zandig (sleuf): kv,top = Qp / (m × D) met m afhankelijk van H/D
+  // Kleiig (sleuf): kv,top = Qp × E / (0.25 × D²)
+  // Niet-sleuf: kv,top = Eeff / D
+  {
+    var KLT = 0;
+    if (H_cover > 0) {
+      const E100Above = weightedAvgPerCategory(layersAbove.map(l => ({ value: l.E100, thickness: l.thickness, category: l.category })));
+      const sigmaKAtTop = calcSigmaK(
+        getLayersInRange(0, pipeAxisDepth - r).map(l => ({ gamma: l.gamma, gammaSat: l.gammaSat, thickness: l.thickness })),
+        pipeAxisDepth - r, waterDepth, gammaW
+      );
+      
+      if (!isTrench) {
+        // Niet-sleuf: KLT = Eeff / D
+        const Eeff = calcEffectiveE(E100Above.combined, sigmaKAtTop * 1000, E100Above.hSand >= E100Above.hClay ? "sand" : "clay");
+        KLT = Eeff / D_m;
+      } else {
+        // Sleuf installatie
+        // Vereenvoudigde NEN 3650-1:2020 C.4.3.2 benadering:
+        // m = 0.02 × H_star/D + 0.01 (verplaatsingsfactor)
+        // kv,top ≈ RVT / (m × D)
+        const mFactor = 0.02 * HstarOverD + 0.01;
+        // RVT wordt later berekend, gebruik hier een geschatte waarde
+        const gammaAbove = weightedAvg(layersAbove.map(l => ({ value: l.gamma, thickness: l.thickness })));
+        const phiAbove = weightedAvg(layersAbove.map(l => ({ value: l.phi, thickness: l.thickness })));
+        const fmAbove = weightedAvg(layersAbove.map(l => ({ value: l.fm, thickness: l.thickness })));
+        const Kp_above = Math.pow(Math.tan(deg2rad(45 + phiAbove / 2)), 2);
+        const RVT_est = gammaAbove * H_m * D_m * (1 + fmAbove * Kp_above * HstarOverD);
+        KLT = RVT_est / Math.max(mFactor * D_m, 0.001);
+      }
+    }
+  }
+
+  // ═══ 5. RVS — Draagkracht onderzijde ═══
   // NEN 3650-1:2020 C.4.2.3
-  // Zandig: RVS = σk × Nq × D + c' × Nc × D
-  // Kleiig: RVS = cu × Nc × D + σk × D
-  const phiBelow = weightedAvg(layersBelow.map(l => ({ value: l.phi, thickness: l.thickness })));
-  const Nq = Math.exp(Math.PI * Math.tan(deg2rad(phiBelow))) * Math.pow(Math.tan(deg2rad(45 + phiBelow / 2)), 2);
-  const Nc = (Nq - 1) / Math.max(Math.tan(deg2rad(phiBelow)), 0.01);
-  const cBelow = weightedAvg(layersBelow.map(l => ({ value: l.cDrained, thickness: l.thickness })));
-  const cuBelow = weightedAvg(layersBelow.map(l => ({ value: l.cUndrained, thickness: l.thickness })));
-  
-  let RVS: number;
-  if (catBelow === "sand") {
-    RVS = (sigmaK * Nq + cBelow * Nc) * (D_out / 1000);
-  } else {
-    const Nc_clay = 5.14; // NEN 3650: Nc = 5.14 voor klei (ongedraineerd)
-    RVS = (cuBelow * Nc_clay + sigmaK) * (D_out / 1000);
+  // Zandig: RVS = (σk × Nq + c' × Nc) × D
+  // Kleiig: RVS = (cu × Nc + σk) × D  met Nc = 5.14
+  {
+    const phiBelowPC = weightedAvgPerCategory(layersBelow.map(l => ({ value: l.phi, thickness: l.thickness, category: l.category })));
+    const cBelowPC = weightedAvgPerCategory(layersBelow.map(l => ({ value: l.cDrained, thickness: l.thickness, category: l.category })));
+    const cuBelowPC = weightedAvgPerCategory(layersBelow.map(l => ({ value: l.cUndrained, thickness: l.thickness, category: l.category })));
+    
+    var RVS_sand = 0, RVS_clay = 0;
+    if (phiBelowPC.hSand > 0) {
+      const Nq = calcNq(phiBelowPC.sand);
+      const Nc = calcNc(phiBelowPC.sand);
+      RVS_sand = (sigmaK * Nq + cBelowPC.sand * Nc) * D_m;
+    }
+    if (cuBelowPC.hClay > 0) {
+      const Nc_clay = 5.14;  // NEN 3650: Nc = 5.14 voor ongedraineerde klei
+      RVS_clay = (cuBelowPC.clay * Nc_clay + sigmaK) * D_m;
+    }
+    const hBelowTot = phiBelowPC.hSand + phiBelowPC.hClay;
+    var RVS = hBelowTot > 0 
+      ? (RVS_sand * phiBelowPC.hSand + RVS_clay * phiBelowPC.hClay) / hBelowTot 
+      : 0;
   }
 
-  // ─── 6. RVT — Maximale opwaartse grondreactie ───
-  // NEN 3650-1:2020 C.4.2.4: RVT = γ × H × D × (1 + fm × Kp × H/D)
-  const gammaAbove = weightedAvg(layersAbove.map(l => ({ value: l.gamma, thickness: l.thickness })));
-  const phiAbove = weightedAvg(layersAbove.map(l => ({ value: l.phi, thickness: l.thickness })));
-  const fmAbove = weightedAvg(layersAbove.map(l => ({ value: l.fm, thickness: l.thickness })));
-  const Kp_above = Math.pow(Math.tan(deg2rad(45 + phiAbove / 2)), 2);
-  const H_m = H_cover / 1000; // [m]
-  const D_m = D_out / 1000;   // [m]
-  
-  let RVT = gammaAbove * H_m * D_m * (1 + fmAbove * Kp_above * H_m / D_m);
-  
-  // Wateropwaartse druk correctie
-  if (waterDepth !== null && waterDepth < pipeAxisDepth) {
-    const waterAbovePipe = (pipeAxisDepth - waterDepth) / 1000; // [m]
-    RVT -= gammaW * waterAbovePipe * D_m;
-    if (RVT < 0) RVT = 0;
+  // ═══ 6. RVT — Maximale opwaartse grondreactie ═══
+  // NEN 3650-1:2020 C.4.2.4
+  // RVT = γ × H × D × (1 + fm × Kp × H/D)
+  {
+    const gammaAbove = weightedAvg(layersAbove.map(l => ({ value: l.gamma, thickness: l.thickness })));
+    const phiAbove = weightedAvg(layersAbove.map(l => ({ value: l.phi, thickness: l.thickness })));
+    const fmAbove = weightedAvg(layersAbove.map(l => ({ value: l.fm, thickness: l.thickness })));
+    const Kp_above = Math.pow(Math.tan(deg2rad(45 + phiAbove / 2)), 2);
+    
+    var RVT = gammaAbove * H_m * D_m * (1 + fmAbove * Kp_above * HstarOverD);
+    
+    // Wateropwaartse druk correctie
+    if (waterDepth !== null && waterDepth < pipeAxisDepth) {
+      const waterAbovePipe = (pipeAxisDepth - waterDepth) / 1000;
+      RVT -= gammaW * waterAbovePipe * D_m;
+      if (RVT < 0) RVT = 0;
+    }
   }
 
-  // ─── 7. RH — Maximale horizontale grondreactie ───
-  // NEN 3650-1:2020 C.4.4
-  // Zandig: RH = σk × Kph × D
-  // Kleiig: RH = cu × Nc × D
-  const cuAxis = weightedAvg(layersAtAxis.map(l => ({ value: l.cUndrained, thickness: l.thickness })));
-  const catAxis = layersAtAxis.length > 0 && layersAtAxis[0].category === "clay" ? "clay" : "sand";
-  
-  let RH: number;
-  if (catAxis === "sand") {
-    RH = sigmaK * Kph * D_m;
-  } else {
-    RH = cuAxis * 9.14 * D_m; // Nc = 9.14 voor horizontaal (Hansen)
+  // ═══ 7. RH — Maximale horizontale grondreactie ═══
+  // NEN 3650-1:2020 C.4.4: Kq/Kc functies
+  // Zandig of kleiig langzame vervorming: Qhor = (Kq × σk + α × Kc × c') × D
+  // Kleiig snelle vervorming: Qhor = Kcu × cu × D
+  // NEN 2020 modelfactoren: 1.00 voor Kq, 0.85 voor Kc en Kcu
+  const modelFactorKq = isNEN2020 ? 1.00 : 1.00;
+  const modelFactorKc = isNEN2020 ? 0.85 : 1.00;
+
+  {
+    const phiRH = weightedAvgPerCategory(layersGLtoBot.map(l => ({ value: l.phi, thickness: l.thickness, category: l.category })));
+    const cRH = weightedAvgPerCategory(layersGLtoBot.map(l => ({ value: l.cDrained, thickness: l.thickness, category: l.category })));
+    const cuRH = weightedAvgPerCategory(layersGLtoBot.map(l => ({ value: l.cUndrained, thickness: l.thickness, category: l.category })));
+    
+    // modelFactors moved to outer scope
+    
+    var RH_sand = 0, RH_clay = 0;
+    
+    if (phiRH.hSand > 0) {
+      const Kq = calcKq(phiRH.sand, HstarOverD);
+      const Kc_val = calcKc(phiRH.sand, HstarOverD);
+      RH_sand = (modelFactorKq * Kq * sigmaK + alpha_install * modelFactorKc * Kc_val * cRH.sand) * D_m;
+    }
+    
+    if (phiRH.hClay > 0 || cuRH.hClay > 0) {
+      // NEN 3650-1:2020: onderscheid langzame en snelle vervorming
+      // Voor nu: gebruik langzame vervorming (conservatiever)
+      const Kq_clay = calcKq(phiRH.clay, HstarOverD);
+      const Kc_clay = calcKc(phiRH.clay, HstarOverD);
+      const RH_clay_slow = (modelFactorKq * Kq_clay * sigmaK + alpha_install * modelFactorKc * Kc_clay * cRH.clay) * D_m;
+      
+      // Snelle vervorming (ongedraineerd)
+      const Kcu_val = calcKcu(HstarOverD);
+      const RH_clay_fast = modelFactorKc * Kcu_val * cuRH.clay * D_m;
+      
+      // Gebruik het minimum (conservatief — PLE4Win kiest afhankelijk van snelheidsinstelling)
+      RH_clay = Math.min(RH_clay_slow, RH_clay_fast);
+      // Als cu = 0, gebruik langzame
+      if (cuRH.clay <= 0) RH_clay = RH_clay_slow;
+    }
+    
+    var RH = hTotalBot > 0 
+      ? (RH_sand * hSandBot + RH_clay * hClayBot) / hTotalBot 
+      : 0;
   }
 
-  // ─── 8. F — Buis-grondwrijving ───
+  // ═══ KLH berekenen uit RH ═══
+  // NEN 3650-1:2020: KLH = RH / (δref × D) met δref = verplaatsing bij bereiken Rmax
+  // PLE4Win: KLH ≈ RH / (0.01 × D)  (1% van diameter als referentieverplaatsing)
+  // Alternatief voor zandig: KLH = 2 × Kq × σk / D
+  {
+    const phiKLH = weightedAvgPerCategory(layersGLtoBot.map(l => ({ value: l.phi, thickness: l.thickness, category: l.category })));
+    
+    var KLH_sand = 0, KLH_clay = 0;
+    if (phiKLH.hSand > 0) {
+      const Kq = calcKq(phiKLH.sand, HstarOverD);
+      KLH_sand = 2 * modelFactorKq * Kq * sigmaK / D_m;
+    }
+    if (phiKLH.hClay > 0) {
+      // Klei: KLH via Eeff benadering
+      const E100Clay = weightedAvg(layersGLtoBot.filter(l => l.category === "clay").map(l => ({ value: l.E100, thickness: l.thickness })));
+      const EeffClay = calcEffectiveE(E100Clay, sigmaK * 1000, "clay");
+      KLH_clay = EeffClay / D_m;
+    }
+    var KLH = hTotalBot > 0 
+      ? (KLH_sand * hSandBot + KLH_clay * hClayBot) / hTotalBot 
+      : 0;
+  }
+
+  // ═══ 8. F — Buis-grondwrijving ═══
   // NEN 3650-1:2020 C.4.5.4
-  // F = σk × tan(δ) × π × D + adhesie × π × D
-  const deltaAvg = weightedAvg(layersAtAxis.map(l => ({ value: l.delta, thickness: l.thickness })));
-  const cAvg = weightedAvg(layersAtAxis.map(l => ({ value: l.cDrained, thickness: l.thickness })));
-  const adhesion = catAxis === "sand" ? cAvg * Math.tan(deg2rad(deltaAvg)) : cAvg * 0.6;
-  const F = sigmaK * Math.tan(deg2rad(deltaAvg)) + adhesion;
-
-  // ─── 9. UF — Verplaatsing bij maximale wrijving ───
-  const ufAvg = weightedAvg(layersAtAxis.map(l => ({ value: l.uFriction, thickness: l.thickness })));
-  const UF = ufAvg;
+  // F = σk × tan(δ) + adhesie
+  // Zandig: adhesie = c' × tan(δ)
+  // Kleiig: adhesie = c' × 0.6  (NEN 2020: ×0.6 extra)
+  // HDD: F = 0
+  // Veen: F = 0
+  {
+    var F = 0;
+    var UF_val = 0;
+    
+    if (isHDD) {
+      // HDD: geen wrijving, UF = 8mm (PLE4Win conventie)
+      F = 0;
+      UF_val = 8;
+    } else {
+      const deltaPC = weightedAvgPerCategory(layersAtAxis.map(l => ({ value: l.delta, thickness: l.thickness, category: l.category })));
+      const cPC = weightedAvgPerCategory(layersAtAxis.map(l => ({ value: l.cDrained, thickness: l.thickness, category: l.category })));
+      const ufPC = weightedAvgPerCategory(layersAtAxis.map(l => ({ value: l.uFriction, thickness: l.thickness, category: l.category })));
+      
+      // Check of de dominante grondsoort veen is (δ = 0 → F = 0)
+      const isPeatDominant = layersAtAxis.some(l => l.mainType === "peat" && l.thickness > 0);
+      const peatThickness = layersAtAxis.filter(l => l.mainType === "peat").reduce((s, l) => s + l.thickness, 0);
+      const totalAxisH = layersAtAxis.reduce((s, l) => s + l.thickness, 0);
+      
+      var F_sand = 0, F_clay = 0;
+      
+      if (deltaPC.hSand > 0) {
+        const adhesion_sand = cPC.sand * Math.tan(deg2rad(deltaPC.sand));
+        F_sand = sigmaK * Math.tan(deg2rad(deltaPC.sand)) + adhesion_sand;
+      }
+      
+      if (deltaPC.hClay > 0) {
+        const adhesionFactor = isNEN2020 ? 0.6 * 0.6 : 0.6;  // NEN 2020: extra ×0.6
+        const adhesion_clay = cPC.clay * adhesionFactor;
+        F_clay = sigmaK * Math.tan(deg2rad(deltaPC.clay)) + adhesion_clay;
+      }
+      
+      // Veen: F = 0
+      if (isPeatDominant && peatThickness > totalAxisH * 0.5) {
+        F_clay = 0;
+      }
+      
+      const hAxisTot = deltaPC.hSand + deltaPC.hClay;
+      F = hAxisTot > 0 ? (F_sand * deltaPC.hSand + F_clay * deltaPC.hClay) / hAxisTot : 0;
+      UF_val = ufPC.combined;
+    }
+  }
 
   return {
     KLH: Math.max(0, KLH),
@@ -350,7 +627,7 @@ export function calcSoilParametersAtNode(
     RVT: Math.max(0, RVT),
     RH: Math.max(0, RH),
     F: Math.max(0, F),
-    UF,
+    UF: UF_val,
     sigmaK,
     H_cover: Math.max(0, H_cover),
   };
