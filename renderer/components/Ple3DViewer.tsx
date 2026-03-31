@@ -951,7 +951,7 @@ export default function Ple3DViewer({
         </div>
 
         {/* ── Buttons ── */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 3, marginTop: "auto", paddingTop: 8, borderTop: `1px solid ${panelBorder}` }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 3, marginTop: 8, paddingTop: 8, borderTop: `1px solid ${panelBorder}` }}>
           {[
             { label: "Save", action: exportPNG },
             { label: "Print", action: () => window.print() },

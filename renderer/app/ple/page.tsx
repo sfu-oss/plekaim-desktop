@@ -2517,50 +2517,37 @@ function PLECalculator() {
         setImportError(""); setImporting(true); setImportFileName(f.name);
         try {
           const parsed = await parsePLEFile(f);
+          setImportedNodes(parsed.nodes);
+          setImportedEls(parsed.elements);
+          setImportedMeta(parsed.meta);
 
-          // Bouw PleModel in-memory database uit de ruwe sheets
-          // PleModel is de "single source of truth" — parseSheetsToModel handelt
-          // ADIDENT insertie robuuster af dan parsePLEFile (S1 kolom-offset tolerant)
-          let activeNodes = parsed.nodes;
-          let activeEls = parsed.elements;
-          let activeMeta = parsed.meta;
-
+          // Bouw PleModel in-memory database uit de ruwe sheets (voor Editor)
           if (parsed.meta._rawSheets) {
             const model = parseSheetsToModel(parsed.meta._rawSheets);
             setPleModel(model);
-            // Gebruik modelToLegacy als primaire bron zodat import en herberekenen
-            // gegarandeerd dezelfde nodes/elements gebruiken
-            const legacy = modelToLegacy(model);
-            activeNodes = legacy.nodes;
-            activeEls = legacy.elements;
-            activeMeta = { ...parsed.meta, ...legacy.meta };
           }
-
-          setImportedNodes(activeNodes);
-          setImportedEls(activeEls);
-          setImportedMeta(activeMeta);
 
           // FEM berekening uitvoeren (stijfheidsmatrix solver)
           try {
             const { solveFEM, solveAllLoadCases } = await import("@/lib/ple-fem");
-            const mat = activeMeta.matProps || {
+            const mat = parsed.meta.matProps || {
               E: 207000, poisson: 0.3, alpha: 12e-6, SMYS: 235, density: 7850
             };
-            const PiVal = activeMeta.Pi || 2.5;
-            const Toper = activeMeta.Top || 100;
-            const Tinstall = activeMeta.Tinst || 10;
-            const loadCases = activeMeta.loadCases || [{ lc: 1, gloadF:1, pressF:1, tDifF:1, deadwF:1, setlF:1 }];
-            const subsideMap = activeMeta.subsideMap || {};
+            const PiVal = parsed.meta.Pi || 2.5;
+            const Toper = parsed.meta.Top || 100;
+            const Tinstall = parsed.meta.Tinst || 10;
+            const loadCases = parsed.meta.loadCases || [{ lc: 1, gloadF:1, pressF:1, tDifF:1, deadwF:1, setlF:1 }];
+            const subsideMap = parsed.meta.subsideMap || {};
 
-            const femNodes = activeNodes.map((n: any, i: number) => {
-              const el = activeEls[i] || activeEls[i-1] || {};
+            const femNodes = parsed.nodes.map((n: any, i: number) => {
+              const el = parsed.elements[i] || parsed.elements[i-1] || {};
               return { ...n, D: el.d || 139.7, t: el.t || 3.6, DPE: n.DPE || el.dc || 225 };
             });
 
             // Bouw boundary conditions uit ENDPTS + ELSPRS
             const bcs: any[] = [];
-            const endptsMap = activeMeta.endptsMap || {};
-            const elsprsMap = activeMeta.elsprsMap || {};
+            const endptsMap = parsed.meta.endptsMap || {};
+            const elsprsMap = parsed.meta.elsprsMap || {};
             Object.entries(endptsMap).forEach(([id, ep]: any) => {
               const cond = (ep.cond || "fixed").toLowerCase();
               if (cond === "fixed" || cond === "anchor") {
@@ -2582,17 +2569,17 @@ function PLECalculator() {
               }
             });
             // Als er geen ENDPTS zijn: gebruik INFIN als default (ipv FIXED)
-            if (bcs.length === 0 && activeNodes.length >= 2) {
-              const firstId = activeNodes[0]?.id || "N0";
-              const lastId = activeNodes[activeNodes.length - 1]?.id || `N${activeNodes.length - 1}`;
+            if (bcs.length === 0 && parsed.nodes.length >= 2) {
+              const firstId = parsed.nodes[0]?.id || "N0";
+              const lastId = parsed.nodes[parsed.nodes.length - 1]?.id || `N${parsed.nodes.length - 1}`;
               bcs.push({ nodeId: firstId, type: "infin" as any });
               bcs.push({ nodeId: lastId, type: "infin" as any });
             }
 
             // Bouw grondveren uit SOIL_TYPES + G-LEVEL coverMap
             const soilSprings: any[] = [];
-            const coverMap = activeMeta.coverMap || {};
-            const globalCover = activeMeta.cover || 500; // mm
+            const coverMap = parsed.meta.coverMap || {};
+            const globalCover = parsed.meta.cover || 500; // mm
             // Gebruik de geselecteerde grondsoort of default zand
             const soilKey = Object.keys(SOIL_TYPES)[0] as keyof typeof SOIL_TYPES;
             const soilProps = SOIL_TYPES[soilName as keyof typeof SOIL_TYPES] || SOIL_TYPES[soilKey];
@@ -2641,13 +2628,13 @@ function PLECalculator() {
 
             // Prioriteit 4: per-element materiaal uit ISTROP
             const perElementMaterials = new Map<number, any>();
-            const istropMap = activeMeta.istropMap || {};
+            const istropMap = parsed.meta.istropMap || {};
             if (Object.keys(istropMap).length > 0) {
               // Koppel materiaal per element via MATL sheet data
-              activeEls.forEach((el: any, ei: number) => {
+              parsed.elements.forEach((el: any, ei: number) => {
                 // Zoek materiaal voor de nodes van dit element
-                const n1Id = activeNodes[el.n1]?.id || "";
-                const n2Id = activeNodes[el.n2]?.id || "";
+                const n1Id = parsed.nodes[el.n1]?.id || "";
+                const n2Id = parsed.nodes[el.n2]?.id || "";
                 // Probeer MATL lookup (als er per-node materiaalverwijzingen zijn)
                 for (const [matRef, matData] of Object.entries(istropMap)) {
                   if (matData) {
@@ -2660,7 +2647,7 @@ function PLECalculator() {
 
             // Prioriteit 5: steunpunten uit SUPPORT + ELSPRS
             const supportBCs: any[] = [];
-            const supportList = activeMeta.supportList || [];
+            const supportList = parsed.meta.supportList || [];
             supportList.forEach((sup: any) => {
               const supRef = sup.supRef || "";
               const springData = elsprsMap[supRef] || {};
@@ -2685,8 +2672,8 @@ function PLECalculator() {
             // Bouw T-stuk SIF data voor de solver
             const teeSpecs: Record<string, any> = {};
             const teeNodeMap: Record<string, string> = {};
-            if (activeMeta.teeSpecData) {
-              Object.entries(activeMeta.teeSpecData).forEach(([ref, spec]: any) => {
+            if (parsed.meta.teeSpecData) {
+              Object.entries(parsed.meta.teeSpecData).forEach(([ref, spec]: any) => {
                 teeSpecs[ref] = {
                   type: spec.TYPE || spec.type || "Welded",
                   dRun: parseFloat(spec["D-RUN"]) || 273,
@@ -2698,8 +2685,8 @@ function PLECalculator() {
                 };
               });
             }
-            if (activeMeta.connects) {
-              activeMeta.connects.forEach((c: any) => {
+            if (parsed.meta.connects) {
+              parsed.meta.connects.forEach((c: any) => {
                 if (c.teeRef) {
                   teeNodeMap[c.id1] = c.teeRef;
                   teeNodeMap[c.id2] = c.teeRef;
@@ -2709,7 +2696,7 @@ function PLECalculator() {
 
             if (loadCases.length > 1) {
               const result = solveAllLoadCases(
-                femNodes, activeEls, mat, PiVal, Toper, Tinstall,
+                femNodes, parsed.elements, mat, PiVal, Toper, Tinstall,
                 loadCases, subsideMap, bcs.length > 0 ? bcs : undefined,
                 soilSprings.length > 0 ? soilSprings : undefined,
                 undefined, undefined, // designFactor, gammaM
@@ -2718,19 +2705,19 @@ function PLECalculator() {
               );
               setFemResults(result.envelope);
               setFemAllLC(result.perLC.map((r: any, i: number) => ({ lc: loadCases[i]?.lc || i + 1, results: r.nodeResults })));
-              activeMeta._femPerLC = result.perLC;
-              activeMeta._femEnvelope = result.envelope;
-              activeMeta._femConverged = result.perLC.every((r: any) => r.converged !== false);
-              activeMeta._soilIterations = result.perLC[0]?.soilIterations;
-              activeMeta._soilConverged = result.perLC[0]?.soilConverged;
-              activeMeta._plasticNodeCount = result.perLC[0]?.plasticNodeCount;
+              parsed.meta._femPerLC = result.perLC;
+              parsed.meta._femEnvelope = result.envelope;
+              parsed.meta._femConverged = result.perLC.every((r: any) => r.converged !== false);
+              parsed.meta._soilIterations = result.perLC[0]?.soilIterations;
+              parsed.meta._soilConverged = result.perLC[0]?.soilConverged;
+              parsed.meta._plasticNodeCount = result.perLC[0]?.plasticNodeCount;
               // Element forces van het maatgevende lastgeval
               const worstLCIdx = result.perLC.reduce((best: number, lc: any, i: number) => {
                 const maxUC = Math.max(...(lc.nodeResults || []).map((r: any) => r.uc || 0));
                 const bestUC = Math.max(...(result.perLC[best]?.nodeResults || []).map((r: any) => r.uc || 0));
                 return maxUC > bestUC ? i : best;
               }, 0);
-              activeMeta._femElementForces = result.perLC[worstLCIdx]?.elementForces;
+              parsed.meta._femElementForces = result.perLC[worstLCIdx]?.elementForces;
             } else {
                 // Bepaal of niet-lineaire analyse nodig is
                 // Alleen bij significante belasting (druk of temperatuur)
@@ -2738,7 +2725,7 @@ function PLECalculator() {
                 const hasSignificantLoad = (lc0.pressF || 0) > 0 || (lc0.tDifF || 0) > 0;
 
                 const result = solveFEM({
-                nodes: femNodes, elements: activeEls, mat,
+                nodes: femNodes, elements: parsed.elements, mat,
                 Pi_bar: PiVal, Toper, Tinstall,
                 loadCase: loadCases[0] || { lc:1, gloadF:1, pressF:1, tDifF:1, deadwF:1, setlF:1 },
                 subsideMap,
@@ -2748,27 +2735,27 @@ function PLECalculator() {
                 supportSprings: supportBCs.length > 0 ? supportBCs : undefined,
                 geometricNonlinear: hasSignificantLoad,
                 materialNonlinear: hasSignificantLoad,
-                maxGeoIterations: activeMeta.geomctl?.maxGeoIterations || 10,
-                geoConvergenceTol: activeMeta.geomctl?.geoConvergenceTol || 0.001,
-                maxRotation: activeMeta.geomctl?.maxRotation || 0.3,
-                maxSoilIterations: activeMeta.soilctl?.maxSoilIterations || 20,
+                maxGeoIterations: parsed.meta.geomctl?.maxGeoIterations || 10,
+                geoConvergenceTol: parsed.meta.geomctl?.geoConvergenceTol || 0.001,
+                maxRotation: parsed.meta.geomctl?.maxRotation || 0.3,
+                maxSoilIterations: parsed.meta.soilctl?.maxSoilIterations || 20,
                 teeSpecs: Object.keys(teeSpecs).length > 0 ? teeSpecs : undefined,
                 teeNodeMap: Object.keys(teeNodeMap).length > 0 ? teeNodeMap : undefined,
               });
               setFemResults(result.nodeResults);
               setFemAllLC([{ lc: loadCases[0]?.lc || 1, results: result.nodeResults }]);
-              activeMeta._femElementForces = result.elementForces;
-              activeMeta._femConverged = result.converged;
-              activeMeta._soilIterations = result.soilIterations;
-              activeMeta._soilConverged = result.soilConverged;
-              activeMeta._plasticNodeCount = result.plasticNodeCount;
-              activeMeta._geoIterations = result.geoIterations;
-              activeMeta._geoConverged = result.geoConverged;
-              activeMeta._matIterations = result.matIterations;
-              activeMeta._matConverged = result.matConverged;
-              activeMeta._yieldedElements = result.yieldedElementCount;
-              activeMeta._maxPlasticStrain = result.maxPlasticStrain;
-              activeMeta._localBuckled = result.localBuckledCount;
+              parsed.meta._femElementForces = result.elementForces;
+              parsed.meta._femConverged = result.converged;
+              parsed.meta._soilIterations = result.soilIterations;
+              parsed.meta._soilConverged = result.soilConverged;
+              parsed.meta._plasticNodeCount = result.plasticNodeCount;
+              parsed.meta._geoIterations = result.geoIterations;
+              parsed.meta._geoConverged = result.geoConverged;
+              parsed.meta._matIterations = result.matIterations;
+              parsed.meta._matConverged = result.matConverged;
+              parsed.meta._yieldedElements = result.yieldedElementCount;
+              parsed.meta._maxPlasticStrain = result.maxPlasticStrain;
+              parsed.meta._localBuckled = result.localBuckledCount;
             }
           } catch (e) {
             console.error("FEM berekening mislukt:", e);
@@ -2776,34 +2763,45 @@ function PLECalculator() {
 
           setTab("model3d");
           // Update basic geometry from import
-          if (activeNodes.length > 1) {
-            const last = activeNodes[activeNodes.length-1];
+          if (parsed.nodes.length > 1) {
+            const last = parsed.nodes[parsed.nodes.length-1];
             setL(Math.max(10, Math.round(Math.hypot(last.x, last.y))));
           }
-          if (activeMeta?.D) setD(activeMeta.D);
-          if (activeMeta?.t) setT(activeMeta.t);
+          if (parsed.meta?.D) setD(parsed.meta.D);
+          if (parsed.meta?.t) setT(parsed.meta.t);
           // Gebruik RUWE waarden voor de state (niet LOCASE-gefactored)
           // De LOCASE factoren worden alleen in de FEM solver toegepast per lastgeval
           // Zo toont de Resultaten tab de werkelijke bedrijfscondities
-          const rawPi = activeMeta?.PiRaw ?? activeMeta?.Pi ?? Pi;
-          const rawTop = activeMeta?.TopRaw ?? activeMeta?.Top ?? Top;
-          const rawTin = activeMeta?.Tinst ?? Tin;
+          const rawPi = parsed.meta?.PiRaw ?? parsed.meta?.Pi ?? Pi;
+          const rawTop = parsed.meta?.TopRaw ?? parsed.meta?.Top ?? Top;
+          const rawTin = parsed.meta?.Tinst ?? Tin;
           setPi(rawPi > 0 ? rawPi * 10 : Pi); // N/mm² → bar
           setTop(rawTop);
           setTin(rawTin);
-          if (activeMeta?.mat) {
-            const m = Object.keys(MATERIALS).find(k => k.toLowerCase().includes(activeMeta.mat.toLowerCase()));
+          if (parsed.meta?.mat) {
+            const m = Object.keys(MATERIALS).find(k => k.toLowerCase().includes(parsed.meta.mat.toLowerCase()));
             if (m) setMatName(m);
           }
-          if (activeMeta?.cover) setHc(activeMeta.cover/1000);
-          if (activeMeta?.water !== undefined) setPe(activeMeta.water>0 ? 0.01 : 0);
+          if (parsed.meta?.cover) setHc(parsed.meta.cover/1000);
+          if (parsed.meta?.water !== undefined) setPe(parsed.meta.water>0 ? 0.01 : 0);
 
           // Save upload for later reopen
           const fd = new FormData();
           fd.append("file", f);
           fd.append("meta", JSON.stringify({ fileName: f.name, size: f.size }));
           const api2 = (window as any).electronAPI;
-          if (api2?.importsSave) { const file = fd.get("file") as File; const buf = await file.arrayBuffer(); const b64 = btoa(String.fromCharCode(...new Uint8Array(buf))); await api2.importsSave({ name: file.name, data: b64 }); }
+          if (api2?.importsSave) {
+            const file = fd.get("file") as File;
+            const buf = await file.arrayBuffer();
+            const bytes = new Uint8Array(buf);
+            let binary = '';
+            const chunkSize = 8192;
+            for (let i = 0; i < bytes.length; i += chunkSize) {
+              binary += String.fromCharCode.apply(null, Array.from(bytes.slice(i, i + chunkSize)));
+            }
+            const b64 = btoa(binary);
+            await api2.importsSave({ name: file.name, data: b64 });
+          }
           const d = await ((window as any).electronAPI?.importsList?.() || Promise.resolve({ items: [] }));
           setSavedImports(d.items || []);
         } catch (err:any) {
@@ -2834,47 +2832,38 @@ function PLECalculator() {
                   const blob = await res.blob();
                   const file = new File([blob], it.filename, { type: blob.type });
                   const parsed = await parsePLEFile(file);
+                  setImportedNodes(parsed.nodes);
+                  setImportedEls(parsed.elements);
+                  setImportedMeta(parsed.meta);
+                  setImportFileName(it.filename);
 
-                  // Bouw PleModel en gebruik als primaire bron
-                  let activeNodes = parsed.nodes;
-                  let activeEls = parsed.elements;
-                  let activeMeta = parsed.meta;
-
+                  // Bouw PleModel in-memory database (voor Editor)
                   if (parsed.meta._rawSheets) {
                     const model = parseSheetsToModel(parsed.meta._rawSheets);
                     setPleModel(model);
-                    const legacy = modelToLegacy(model);
-                    activeNodes = legacy.nodes;
-                    activeEls = legacy.elements;
-                    activeMeta = { ...parsed.meta, ...legacy.meta };
                   }
-
-                  setImportedNodes(activeNodes);
-                  setImportedEls(activeEls);
-                  setImportedMeta(activeMeta);
-                  setImportFileName(it.filename);
 
                   // FEM berekening uitvoeren (stijfheidsmatrix solver)
                   try {
                     const { solveFEM, solveAllLoadCases } = await import("@/lib/ple-fem");
-                    const mat = activeMeta.matProps || {
+                    const mat = parsed.meta.matProps || {
                       E: 207000, poisson: 0.3, alpha: 12e-6, SMYS: 235, density: 7850
                     };
-                    const PiVal = activeMeta.Pi || 2.5;
-                    const Toper = activeMeta.Top || 100;
-                    const Tinstall = activeMeta.Tinst || 10;
-                    const loadCases = activeMeta.loadCases || [{ lc: 1, gloadF:1, pressF:1, tDifF:1, deadwF:1, setlF:1 }];
-                    const subsideMap = activeMeta.subsideMap || {};
+                    const PiVal = parsed.meta.Pi || 2.5;
+                    const Toper = parsed.meta.Top || 100;
+                    const Tinstall = parsed.meta.Tinst || 10;
+                    const loadCases = parsed.meta.loadCases || [{ lc: 1, gloadF:1, pressF:1, tDifF:1, deadwF:1, setlF:1 }];
+                    const subsideMap = parsed.meta.subsideMap || {};
 
-                    const femNodes = activeNodes.map((n: any, i: number) => {
-                      const el = activeEls[i] || activeEls[i-1] || {};
+                    const femNodes = parsed.nodes.map((n: any, i: number) => {
+                      const el = parsed.elements[i] || parsed.elements[i-1] || {};
                       return { ...n, D: el.d || 139.7, t: el.t || 3.6, DPE: n.DPE || el.dc || 225 };
                     });
 
                     // Bouw boundary conditions uit ENDPTS + ELSPRS
                     const bcs: any[] = [];
-                    const endptsMap = activeMeta.endptsMap || {};
-                    const elsprsMap = activeMeta.elsprsMap || {};
+                    const endptsMap = parsed.meta.endptsMap || {};
+                    const elsprsMap = parsed.meta.elsprsMap || {};
                     Object.entries(endptsMap).forEach(([id, ep]: any) => {
                       const cond = (ep.cond || "fixed").toLowerCase();
                       if (cond === "fixed" || cond === "anchor") {
@@ -2894,17 +2883,17 @@ function PLECalculator() {
                         });
                       }
                     });
-                    if (bcs.length === 0 && activeNodes.length >= 2) {
-                      const firstId = activeNodes[0]?.id || "N0";
-                      const lastId = activeNodes[activeNodes.length - 1]?.id || `N${activeNodes.length - 1}`;
+                    if (bcs.length === 0 && parsed.nodes.length >= 2) {
+                      const firstId = parsed.nodes[0]?.id || "N0";
+                      const lastId = parsed.nodes[parsed.nodes.length - 1]?.id || `N${parsed.nodes.length - 1}`;
                       bcs.push({ nodeId: firstId, type: "infin" as any });
                       bcs.push({ nodeId: lastId, type: "infin" as any });
                     }
 
                     // Bouw grondveren uit SOIL_TYPES + G-LEVEL coverMap
                     const soilSprings: any[] = [];
-                    const coverMap = activeMeta.coverMap || {};
-                    const globalCover = activeMeta.cover || 500;
+                    const coverMap = parsed.meta.coverMap || {};
+                    const globalCover = parsed.meta.cover || 500;
                     const soilKey = Object.keys(SOIL_TYPES)[0] as keyof typeof SOIL_TYPES;
                     const soilProps = SOIL_TYPES[soilName as keyof typeof SOIL_TYPES] || SOIL_TYPES[soilKey];
                     femNodes.forEach((node: any) => {
@@ -2930,21 +2919,21 @@ function PLECalculator() {
 
                     if (loadCases.length > 1) {
                       const result = solveAllLoadCases(
-                        femNodes, activeEls, mat, PiVal, Toper, Tinstall,
+                        femNodes, parsed.elements, mat, PiVal, Toper, Tinstall,
                         loadCases, subsideMap, bcs.length > 0 ? bcs : undefined,
                         soilSprings.length > 0 ? soilSprings : undefined,
                       );
                       setFemResults(result.envelope);
                       setFemAllLC(result.perLC.map((r: any, i: number) => ({ lc: loadCases[i]?.lc || i + 1, results: r.nodeResults })));
-                      activeMeta._femPerLC = result.perLC;
-                      activeMeta._femEnvelope = result.envelope;
-                      activeMeta._femConverged = result.perLC.every((r: any) => r.converged !== false);
-                      activeMeta._soilIterations = result.perLC[0]?.soilIterations;
-                      activeMeta._soilConverged = result.perLC[0]?.soilConverged;
-                      activeMeta._plasticNodeCount = result.perLC[0]?.plasticNodeCount;
+                      parsed.meta._femPerLC = result.perLC;
+                      parsed.meta._femEnvelope = result.envelope;
+                      parsed.meta._femConverged = result.perLC.every((r: any) => r.converged !== false);
+                      parsed.meta._soilIterations = result.perLC[0]?.soilIterations;
+                      parsed.meta._soilConverged = result.perLC[0]?.soilConverged;
+                      parsed.meta._plasticNodeCount = result.perLC[0]?.plasticNodeCount;
                     } else {
                       const result = solveFEM({
-                        nodes: femNodes, elements: activeEls, mat,
+                        nodes: femNodes, elements: parsed.elements, mat,
                         Pi_bar: PiVal, Toper, Tinstall,
                         loadCase: loadCases[0] || { lc:1, gloadF:1, pressF:1, tDifF:1, deadwF:1, setlF:1 },
                         subsideMap,
@@ -2953,29 +2942,29 @@ function PLECalculator() {
                       });
                       setFemResults(result.nodeResults);
                       setFemAllLC([{ lc: loadCases[0]?.lc || 1, results: result.nodeResults }]);
-                      activeMeta._femElementForces = result.elementForces;
-                      activeMeta._femConverged = result.converged;
-                      activeMeta._soilIterations = result.soilIterations;
-                      activeMeta._soilConverged = result.soilConverged;
-                      activeMeta._plasticNodeCount = result.plasticNodeCount;
+                      parsed.meta._femElementForces = result.elementForces;
+                      parsed.meta._femConverged = result.converged;
+                      parsed.meta._soilIterations = result.soilIterations;
+                      parsed.meta._soilConverged = result.soilConverged;
+                      parsed.meta._plasticNodeCount = result.plasticNodeCount;
                     }
                   } catch (e) {
                     console.error("FEM berekening mislukt:", e);
                   }
 
                   setTab("model3d");
-                  if (activeMeta?.D) setD(activeMeta.D);
-                  if (activeMeta?.t) setT(activeMeta.t);
-                  const rawPi3 = activeMeta?.PiRaw ?? activeMeta?.Pi;
+                  if (parsed.meta?.D) setD(parsed.meta.D);
+                  if (parsed.meta?.t) setT(parsed.meta.t);
+                  const rawPi3 = parsed.meta?.PiRaw ?? parsed.meta?.Pi;
                   setPi(rawPi3 > 0 ? rawPi3 * 10 : Pi);
-                  setTop(activeMeta?.TopRaw ?? activeMeta?.Top ?? Top);
-                  setTin(activeMeta?.Tinst ?? Tin);
-                  if (activeMeta?.mat) {
-                    const m = Object.keys(MATERIALS).find(k => k.toLowerCase().includes(activeMeta.mat.toLowerCase()));
+                  setTop(parsed.meta?.TopRaw ?? parsed.meta?.Top ?? Top);
+                  setTin(parsed.meta?.Tinst ?? Tin);
+                  if (parsed.meta?.mat) {
+                    const m = Object.keys(MATERIALS).find(k => k.toLowerCase().includes(parsed.meta.mat.toLowerCase()));
                     if (m) setMatName(m);
                   }
-                  if (activeMeta?.cover) setHc(activeMeta.cover/1000);
-                  if (activeMeta?.water !== undefined) setPe(activeMeta.water>0 ? 0.01 : 0);
+                  if (parsed.meta?.cover) setHc(parsed.meta.cover/1000);
+                  if (parsed.meta?.water !== undefined) setPe(parsed.meta.water>0 ? 0.01 : 0);
                 } catch { setImportError("Kon bestand niet openen"); }
               }} style={{
                 padding: "4px 10px", background: "rgba(59,130,246,0.08)", border: `1px solid rgba(59,130,246,0.2)`,
@@ -3768,7 +3757,7 @@ function PLECalculator() {
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <div>
                 <div style={{ fontSize: mobile?13:14, fontWeight: 700, letterSpacing: -0.5 }}>PLE Calculator</div>
-                {!mobile && <div style={{ fontSize: 11, color: css.dim }}>Pipeline Engineering — NEN 3650-2</div>}
+                {!mobile && <div style={{ fontSize: 11, color: css.dim }}>Pipeline Engineering — NEN 3650-2  •  v0.2.0</div>}
               </div>
               {/* Bestandsnaam indicator + download knop */}
               {importFileName && (
