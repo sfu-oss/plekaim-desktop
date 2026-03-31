@@ -26,7 +26,8 @@ if (!email) {
 }
 
 // Load secret for HMAC
-const secret = fs.readFileSync(path.join(__dirname, 'private.pem'), 'utf-8');
+const keyPath = process.env.LICENSE_PRIVATE_KEY_PATH || process.env.KAIM_PRIVATE_KEY_PATH || path.join(__dirname, 'private.pem');
+const secret = fs.readFileSync(keyPath, 'utf-8');
 
 const expiresAt = new Date(Date.now() + days * 86400000);
 const expiryStr = expiresAt.toISOString().split('T')[0].replace(/-/g, '');

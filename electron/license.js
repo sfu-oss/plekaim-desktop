@@ -80,7 +80,7 @@ function validateKey(licenseKey, email) {
  * Full HMAC verification (requires private key — admin only)
  */
 function verifyKeyHMAC(licenseKey, email) {
-  const privKeyPath = path.join(__dirname, '..', 'license-tools', 'private.pem');
+  const privKeyPath = process.env.LICENSE_PRIVATE_KEY_PATH || process.env.KAIM_PRIVATE_KEY_PATH || path.join(__dirname, '..', 'license-tools', 'private.pem');
   if (!fs.existsSync(privKeyPath)) return null; // Can't verify without key
 
   const parsed = parseKey(licenseKey);

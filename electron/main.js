@@ -204,7 +204,7 @@ async function promptLicenseKey() {
 
 // ─── Admin: License generation IPC ─────────────────────────
 const ADMIN_EMAILS = ['skuu@kaimple.com', 'desktop@kaimple.com', 'admin@kaimple.com'];
-const PRIVATE_KEY_PATH = path.join(__dirname, '..', 'license-tools', 'private.pem');
+const PRIVATE_KEY_PATH = process.env.LICENSE_PRIVATE_KEY_PATH || process.env.KAIM_PRIVATE_KEY_PATH || path.join(__dirname, '..', 'license-tools', 'private.pem');
 
 ipcMain.handle('generate-license', async (event, payload) => {
   const fs = require('fs');
