@@ -15,7 +15,6 @@
 // in-memory database, niet de database zelf.
 
 import type { FemNode, FemElement, MatProps, LoadCase, BoundaryCondition, FemSolverInput } from "./ple-fem";
-import { getMaterialProps } from "./ple-materials";
 
 // ============================================================
 // Data types — één per PLE4Win sheet
@@ -213,6 +212,13 @@ export interface PleSoilctl {
   maxSoilIterations: number;
 }
 
+export interface PleWeld {
+  lngtWeld: number;   // lasnaadlengte (mm) — LNGT-WELD
+  lwFac:    number;   // lasnaad factor longitudinaal — LW-FAC (default 1.0)
+  circWeld: number;   // omtreklas (mm) — CIRC-WELD
+  cwFac:    number;   // lasnaad factor omtreklas — CW-FAC (default 1.0)
+}
+
 // ============================================================
 // Het centrale PleModel
 // ============================================================
@@ -287,6 +293,7 @@ export interface PleModel {
   adidents: PleAdident[];
   supangs: PleSupang[];
   sections: PleSection[];
+  welds: PleWeld[];
 
   // Configuratie
   origin: PleOrigin;
@@ -461,20 +468,16 @@ export function parseSheetsToModel(sheets: Record<string, any[][]>): PleModel {
     matfact: toNum(m.MATFACT) || 1,
   }));
 
-  // ISTROP — parse uit Excel, vul ontbrekende waarden aan uit predefined materialen database
-  const materialProps: PleIstrop[] = sheetToObjects(sheets.ISTROP || []).map(m => {
-    const ref = normalizeId(m.MATREF);
-    const db = getMaterialProps(ref); // fallback uit ple-materials.ts
-    return {
-      matRef: ref,
-      E:      toNum(m.Emod)   || db.E,
-      nu:     toNum(m.Nu)     || db.nu,
-      alpha:  toNum(m.ALPHA)  || db.alpha,
-      Re:     toNum(m.Re)     || db.Re,
-      ReT:    toNum(m.ReT)    || db.ReT,
-      weight: toNum(m.WEIGHT) || db.weight,
-    };
-  });
+  // ISTROP
+  const materialProps: PleIstrop[] = sheetToObjects(sheets.ISTROP || []).map(m => ({
+    matRef: normalizeId(m.MATREF),
+    E: toNum(m.Emod) || 207000,
+    nu: toNum(m.Nu) || 0.3,
+    alpha: toNum(m.ALPHA) || 12e-6,
+    Re: toNum(m.Re) || 235,
+    ReT: toNum(m.ReT) || 0,
+    weight: toNum(m.WEIGHT) || 0,
+  }));
 
   // ENDPTS
   const endpts: PleEndpt[] = sheetToObjects(sheets.ENDPTS || []).map(e => ({
@@ -579,25 +582,34 @@ export function parseSheetsToModel(sheets: Record<string, any[][]>): PleModel {
     tref2: toNum(t["T-REF2"]) || null,
   }));
 
-  // LOCASE
+  // LOCASE — NEN 3650-1:2020 standaard lastfactoren als fallback voor lege cellen
+  // Conform PLE4Win CheckLoadcaseNen: als een factor leeg/nul is maar het lastgeval
+  // heeft druk of temperatuur, dan worden de NEN 3650 standaardwaarden gebruikt.
   let loadCases: PleLoadCase[] = sheetToObjects(sheets.LOCASE || []).map(l => {
     const lcId = (l.LC || "").toString().trim();
     const pressF = toNum(l["PRESS-F"]) ?? 0;
-    const tDifF = toNum(l["T-DIF-F"]) ?? 0;
+    const tDifF  = toNum(l["T-DIF-F"]) ?? 0;
     const isEigengewicht = pressF === 0 && tDifF === 0;
     const lcName = (lcId === "-" || lcId === "" || lcId === "–")
       ? (isEigengewicht ? "Eigengewicht" : "Bedrijf")
       : lcId;
+
+    // NEN 3650 defaults voor ontbrekende factoren (alleen bij bedrijfslastgevallen)
+    const nen = !isEigengewicht;
+    const rawDeadwF = toNum(l["DEADW-F"]);
+    const rawSetlF  = toNum(l["SETL-F"]);
+    const rawGloadF = toNum(l.GLOADF);
+
     return {
       lc: lcName,
-      gloadF: toNum(l.GLOADF) ?? 1,
+      gloadF:  !isNaN(rawGloadF) ? rawGloadF : 1.0,
       pressF,
       tDifF,
-      deadwF: toNum(l["DEADW-F"]) ?? 0,
-      setlF: toNum(l["SETL-F"]) ?? 0,
-      nodalF: toNum(l["NODAL-F"]) ?? 0,
-      elbndF: toNum(l["ELBND-F"]) ?? 0,
-      wavcF: toNum(l["WAVC-F"]) ?? 0,
+      deadwF:  !isNaN(rawDeadwF) && rawDeadwF !== 0 ? rawDeadwF : (nen ? 1.1  : 0),
+      setlF:   !isNaN(rawSetlF)  && rawSetlF  !== 0 ? rawSetlF  : (nen ? 1.1  : 0),
+      nodalF:  toNum(l["NODAL-F"]) ?? 0,
+      elbndF:  toNum(l["ELBND-F"]) ?? 0,
+      wavcF:   toNum(l["WAVC-F"])  ?? 0,
     };
   });
   if (loadCases.length === 0) {
@@ -638,6 +650,15 @@ export function parseSheetsToModel(sheets: Record<string, any[][]>): PleModel {
   const sections: PleSection[] = sheetToObjects(sheets.SECTION || []).map(s => ({
     ident: normalizeId(s.Identifier || s.IDENT),
     sectRef: normalizeId(s.SECTREF),
+  }));
+
+  // WELD — lasnaadcorrectie factor (PLE4Win WELD tabel, AddWeld uit Function6.dll)
+  // LW-FAC < 1.0 verlaagt toelaatbare spanning bij längsnaden (bv. spiraalgelaste buis)
+  const welds: PleWeld[] = sheetToObjects(sheets.WELD || []).map(w => ({
+    lngtWeld: toNum(w['LNGT-WELD']) || 0,
+    lwFac:    toNum(w['LW-FAC'])    ?? 1.0,
+    circWeld: toNum(w['CIRC-WELD']) || 0,
+    cwFac:    toNum(w['CW-FAC'])    ?? 1.0,
   }));
 
   // GEOMCTL
@@ -821,7 +842,7 @@ export function parseSheetsToModel(sheets: Record<string, any[][]>): PleModel {
     nodes, diameters, walls, materials, materialProps,
     endpts, supports, springs, connects, teeSpecs, teeConfs,
     coatings, gLevels, wLevels, press, temp, loadCases,
-    subside, adidents, supangs, sections,
+    subside, adidents, supangs, sections, welds,
     origin, geomctl, soilctl,
     _elements: [],
     _endpointSet: new Set(endpts.map(e => e.ident)),
@@ -955,6 +976,7 @@ export function buildFemInput(
   soilSprings: any[];
   teeSpecs: Record<string, any>;
   teeNodeMap: Record<string, string>;
+  weldFactor: number;
   supportBCs: BoundaryCondition[];
   geomctl: PleGeomctl;
   soilctl: PleSoilctl;
@@ -1087,10 +1109,18 @@ export function buildFemInput(
     }
   });
 
+  // Lasnaadcorrectie factor z_w (PLE4Win WELD tabel / AddWeld uit Function6.dll)
+  // LW-FAC is de maatgevende factor voor längsnaden — gebruik de laagste waarde
+  // als er meerdere WELD-rijen zijn (conservatief).
+  const weldFactor = model.welds && model.welds.length > 0
+    ? Math.min(...model.welds.map(w => w.lwFac ?? 1.0))
+    : 1.0;
+
   return {
     femNodes, elements, mat, Pi_bar: PiVal, Toper, Tinstall,
     loadCases, subsideMap, bcs, soilSprings,
     teeSpecs: teeSpecsR, teeNodeMap,
+    weldFactor,
     supportBCs, geomctl: model.geomctl, soilctl: model.soilctl,
   };
 }
@@ -1264,6 +1294,14 @@ export function modelToRawSheets(model: PleModel): Record<string, any[][]> {
     model.sections.map(s => ({ Identifier: s.ident, SECTREF: s.sectRef })),
     [{ key: "Identifier" }, { key: "SECTREF" }],
   );
+
+  // WELD — lasnaadcorrectie factoren
+  if (model.welds && model.welds.length > 0) {
+    sheets.WELD = arrayToRaw(
+      model.welds.map(w => ({ "LNGT-WELD": w.lngtWeld, "LW-FAC": w.lwFac, "CIRC-WELD": w.circWeld, "CW-FAC": w.cwFac })),
+      [{ key: "LNGT-WELD", unit: "mm" }, { key: "LW-FAC" }, { key: "CIRC-WELD", unit: "mm" }, { key: "CW-FAC" }],
+    );
+  }
 
   // GENSOIL — Soil Wizard resultaten als PLE4Win-compatibele tabellen
   // PLE4Win Design Function 3.2 verwacht aparte polygon-tabellen per parameter

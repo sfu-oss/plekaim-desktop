@@ -1,15 +1,16 @@
 "use client";
 
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useMemo } from "react";
 import PleDataGrid, { PleColumnDef } from "./PleDataGrid";
 import type {
   PleModel, PleNode, PleDiam, PleWall, PleMatl, PleIstrop,
   PleEndpt, PleSupport, PleSpring, PleConnect, PleTeeSpec, PleTeeConf,
-  PleCoating, PleGLevel, PleWLevel, PlePress, PleTemp,
+  PleCoating, PleGLevel, PleWLevel, PlePress, PleTemp, PleWeld,
   PleLoadCase, PleSubside, PleAdident, PleSupang,
 } from "../../lib/ple-model";
 import { updateModelTable } from "../../lib/ple-model";
 import { MATERIAL_REFS, findMaterial } from "../../lib/ple-materials";
+import { checkLoadcaseNen, NEN3650_STANDARD_FACTORS } from "../../lib/ple-fem";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    PLE Editor v2 — Bewerkbare tabellen die PleModel direct muteren
@@ -32,6 +33,13 @@ import { MATERIAL_REFS, findMaterial } from "../../lib/ple-materials";
 const F = "'JetBrains Mono','Fira Code','Courier New',monospace";
 
 // ── Kolom definities per tabel ──
+
+const WELD_COLS: PleColumnDef[] = [
+  { key: "lngtWeld", label: "LNGT-WELD", unit: "mm",  type: "number", width: 100, decimals: 1 },
+  { key: "lwFac",    label: "LW-FAC",                  type: "number", width: 80,  decimals: 3, min: 0, max: 1 },
+  { key: "circWeld", label: "CIRC-WELD", unit: "mm",  type: "number", width: 100, decimals: 1 },
+  { key: "cwFac",    label: "CW-FAC",                  type: "number", width: 80,  decimals: 3, min: 0, max: 1 },
+];
 
 const NODE_COLS: PleColumnDef[] = [
   { key: "id", label: "Ident", type: "text", width: 90, required: true },
@@ -56,13 +64,13 @@ const WALL_COLS: PleColumnDef[] = [
 
 const MATL_COLS: PleColumnDef[] = [
   { key: "ident", label: "Ident", type: "text", width: 90, required: true },
-  { key: "matRef", label: "Materiaal", type: "text", width: 120, datalist: MATERIAL_REFS },
+  { key: "matRef", label: "Materiaal", type: "text", width: 100 },
   { key: "fabmet", label: "Fabricage", type: "select", options: ["none", "seam-welded", "seamless"], width: 100 },
   { key: "matfact", label: "MATFACT", type: "number", width: 70, decimals: 2 },
 ];
 
 const ISTROP_COLS: PleColumnDef[] = [
-  { key: "matRef", label: "Materiaal", type: "text", width: 120, required: true, datalist: MATERIAL_REFS },
+  { key: "matRef", label: "Materiaal", type: "text", width: 100, required: true },
   { key: "E", label: "E-mod", unit: "MPa", type: "number", width: 80 },
   { key: "nu", label: "ν", type: "number", width: 60, decimals: 2 },
   { key: "alpha", label: "α", unit: "1/°C", type: "number", width: 80, decimals: 7 },
@@ -201,6 +209,7 @@ const SUB_TABS: SubTab[] = [
   { id: "loading", label: "Belasting", icon: "⚡", color: "#7030A0" },
   { id: "tees", label: "T-stukken", icon: "🔀", color: "#548235" },
   { id: "coating", label: "Coating", icon: "🛡️", color: "#ED7D31" },
+  { id: "weld", label: "Lasnaad", icon: "🔩", color: "#C0504D" },
   { id: "config", label: "Config", icon: "⚙️", color: "#A5A5A5" },
 ];
 
@@ -212,6 +221,62 @@ interface PleEditorProps {
   // Legacy compatibility: rawSheets-based interface
   rawSheets?: Record<string, any[][]>;
   onRawSheetsChange?: (updated: Record<string, any[][]>) => void;
+}
+
+// ── WeldTab — Lasnaad + NEN 3650 lastfactor validatie ──
+function WeldTab({ model, setTable }: { model: PleModel; setTable: <K extends keyof PleModel>(table: K, data: PleModel[K]) => void }) {
+  const nenWarnings = useMemo(() => {
+    // PleLoadCase heeft alle velden die checkLoadcaseNen nodig heeft
+    return checkLoadcaseNen(model.loadCases as any);
+  }, [model.loadCases]);
+
+  const weldFactor = model.welds && model.welds.length > 0
+    ? Math.min(...model.welds.map(w => w.lwFac ?? 1.0))
+    : 1.0;
+
+  return (
+    <>
+      <PleDataGrid
+        title="WELD — Lasnaadcorrectie factoren"
+        subtitle="LW-FAC < 1.0 verlaagt toelaatbare spanning bij längsnaden (bv. spiraalgelaste buis). PLE4Win: AddWeld (Function6)"
+        columns={WELD_COLS}
+        data={(model.welds || []) as any[]}
+        onChange={d => setTable("welds", d as PleWeld[])}
+        newRowTemplate={{ lngtWeld: 0, lwFac: 1.0, circWeld: 0, cwFac: 1.0 }}
+      />
+
+      {/* Actieve lasnaad factor samenvatting */}
+      <div style={{ margin: "8px 0 16px", padding: "8px 12px", background: weldFactor < 1.0 ? "#422010" : "#0f172a", border: `1px solid ${weldFactor < 1.0 ? "#f97316" : "#1e293b"}`, borderRadius: 4, fontFamily: F, fontSize: 11, color: "#e2e8f0" }}>
+        Actieve lasnaad factor (z_w): <span style={{ color: weldFactor < 1.0 ? "#f97316" : "#22c55e", fontWeight: 700 }}>{weldFactor.toFixed(3)}</span>
+        {weldFactor < 1.0 && <span style={{ color: "#94a3b8", marginLeft: 8 }}>→ toelaatbare spanning verlaagd met {((1 - weldFactor) * 100).toFixed(1)}%</span>}
+        {weldFactor === 1.0 && <span style={{ color: "#64748b", marginLeft: 8 }}>— geen correctie (naadloos of ongespecificeerd)</span>}
+      </div>
+
+      {/* NEN 3650 lastfactor validatie */}
+      <div style={{ marginTop: 16, padding: "10px 12px", background: "#0f172a", border: "1px solid #1e293b", borderRadius: 4, fontFamily: F, fontSize: 11 }}>
+        <div style={{ color: "#94a3b8", marginBottom: 8, fontWeight: 600 }}>
+          NEN 3650 lastfactor validatie — CheckLoadcaseNen (PLE4Win Function5)
+        </div>
+        <div style={{ color: "#64748b", marginBottom: 8, fontSize: 10 }}>
+          Standaard: PRESS-F={NEN3650_STANDARD_FACTORS.pressF}, T-DIF-F={NEN3650_STANDARD_FACTORS.tDifF}, DEADW-F={NEN3650_STANDARD_FACTORS.deadwF}, SETL-F={NEN3650_STANDARD_FACTORS.setlF}
+        </div>
+        {nenWarnings.length === 0 ? (
+          <div style={{ color: "#22c55e", fontSize: 11 }}>✓ Alle lastfactoren conform NEN 3650-1:2020</div>
+        ) : (
+          nenWarnings.map((w, i) => (
+            <div key={i} style={{
+              padding: "4px 8px", marginBottom: 4, borderRadius: 3,
+              background: w.severity === "warning" ? "#422010" : "#1e3a1e",
+              border: `1px solid ${w.severity === "warning" ? "#f97316" : "#16a34a"}`,
+              color: w.severity === "warning" ? "#fdba74" : "#86efac",
+            }}>
+              {w.severity === "warning" ? "⚠️" : "ℹ️"} {w.message}
+            </div>
+          ))
+        )}
+      </div>
+    </>
+  );
 }
 
 export default function PleEditor({ model, onModelChange, onDataChanged, rawSheets, onRawSheetsChange }: PleEditorProps) {
@@ -288,26 +353,10 @@ export default function PleEditor({ model, onModelChange, onDataChanged, rawShee
           />
           <PleDataGrid
             title="ISTROP — Materiaal eigenschappen"
-            subtitle="E-modulus, Poisson, thermische coëfficiënt, SMYS — typ een materiaalcode voor autocomplete"
+            subtitle="E-modulus, Poisson, thermische coëfficiënt, SMYS"
             columns={ISTROP_COLS}
             data={model.materialProps as any[]}
-            onChange={d => {
-              // Auto-fill eigenschappen als matRef overeenkomt met bekende database entry
-              const filled = (d as PleIstrop[]).map(row => {
-                const db = findMaterial(row.matRef);
-                if (!db) return row;
-                return {
-                  ...row,
-                  E:      row.E      || db.E,
-                  nu:     row.nu     || db.nu,
-                  alpha:  row.alpha  || db.alpha,
-                  Re:     row.Re     || db.Re,
-                  ReT:    row.ReT    || db.ReT,
-                  weight: row.weight || db.weight,
-                };
-              });
-              setTable("materialProps", filled as PleIstrop[]);
-            }}
+            onChange={d => setTable("materialProps", d as PleIstrop[])}
           />
         </>
       )}
@@ -420,6 +469,10 @@ export default function PleEditor({ model, onModelChange, onDataChanged, rawShee
           data={model.coatings as any[]}
           onChange={d => setTable("coatings", d as PleCoating[])}
         />
+      )}
+
+      {subTab === "weld" && (
+        <WeldTab model={model} setTable={setTable} />
       )}
 
       {subTab === "config" && (

@@ -725,14 +725,84 @@ export function calcVonMises(sh: number, sl: number): number {
 /** Unity check EN 13941-1 tabel 3 klasse 1 (staal) */
 export function calcUC(
   sh: number, vm: number, SMYS: number,
-  designFactor = 0.72, gammaM = 1.1
+  designFactor = 0.72, gammaM = 1.1,
+  weldFactor = 1.0   // z_w lasnaadcorrectie factor (PLE4Win WELD tabel)
 ): { ucRing: number; ucVM: number; uc: number; ok: boolean } {
-  const sha = designFactor * SMYS;
-  const vma = 0.85 * SMYS / gammaM;
+  const sha = designFactor * SMYS * weldFactor;
+  const vma = 0.85 * SMYS / gammaM * weldFactor;
   const ucRing = sha > 0 ? Math.abs(sh) / sha : 0;
   const ucVM = vma > 0 ? vm / vma : 0;
   const uc = Math.max(ucRing, ucVM);
   return { ucRing, ucVM, uc, ok: uc <= 1.0 };
+}
+
+// =============================================================================
+// NEN 3650 lastfactor validatie (CheckLoadcaseNen uit PLE.Edu.Calc.Function5)
+// =============================================================================
+
+/** NEN 3650-1:2020 tabel 1 — standaard lastfactoren voor bedrijfssituatie */
+export const NEN3650_STANDARD_FACTORS = {
+  gloadF:  1.0,   // Zwaartekracht
+  pressF:  1.15,  // Interne druk (gunstig: 0.9)
+  tDifF:   1.1,   // Temperatuurverschil
+  deadwF:  1.1,   // Eigengewicht buis + inhoud
+  setlF:   1.1,   // Zakking
+  nodalF:  1.1,   // Puntlasten
+} as const;
+
+export interface LoadcaseNenWarning {
+  lc: string;
+  field: string;
+  value: number;
+  expected: number;
+  severity: 'warning' | 'info';
+  message: string;
+}
+
+/**
+ * Valideert LOCASE lastfactoren conform NEN 3650-1:2020.
+ * Gebaseerd op PLE4Win CheckLoadcaseNen functie in Function5.dll.
+ *
+ * Geeft waarschuwingen terug voor afwijkende factoren —
+ * dit blokkeert de berekening NIET maar informeert de gebruiker.
+ */
+export function checkLoadcaseNen(loadCases: LoadCase[]): LoadcaseNenWarning[] {
+  const warnings: LoadcaseNenWarning[] = [];
+  const std = NEN3650_STANDARD_FACTORS;
+
+  for (const lc of loadCases) {
+    // Skip eigengewicht-only lastgevallen (pressF=0 en tDifF=0)
+    if (lc.pressF === 0 && lc.tDifF === 0) continue;
+
+    const checks: Array<{ field: keyof typeof std; label: string; val: number }> = [
+      { field: 'pressF',  label: 'PRESS-F',  val: lc.pressF  },
+      { field: 'tDifF',   label: 'T-DIF-F',  val: lc.tDifF   },
+      { field: 'deadwF',  label: 'DEADW-F',  val: lc.deadwF  },
+      { field: 'setlF',   label: 'SETL-F',   val: lc.setlF   },
+      { field: 'gloadF',  label: 'GLOADF',   val: lc.gloadF  },
+    ];
+
+    for (const { field, label, val } of checks) {
+      const expected = std[field];
+      if (val === 0) continue; // niet ingevuld, geen warning
+
+      // Afwijking > 1% → waarschuwing
+      if (Math.abs(val - expected) / expected > 0.01) {
+        warnings.push({
+          lc: String(lc.lc),
+          field: label,
+          value: val,
+          expected,
+          severity: val < expected ? 'warning' : 'info',
+          message: val < expected
+            ? `LC "${lc.lc}": ${label} = ${val} is LAGER dan NEN 3650 standaard (${expected}) — conservativiteit verminderd`
+            : `LC "${lc.lc}": ${label} = ${val} wijkt af van NEN 3650 standaard (${expected})`,
+        });
+      }
+    }
+  }
+
+  return warnings;
 }
 
 // =============================================================================
@@ -1178,6 +1248,9 @@ export interface FemSolverInput {
   teeSpecs?: Record<string, { type: string; dRun: number; tRun: number; dBrn: number; tBrn: number; te: number; r0: number }>;
   // Map van T-stuk node IDs naar hun TEE-REF naam
   teeNodeMap?: Record<string, string>;
+  // Lasnaadcorrectie factor z_w (PLE4Win WELD tabel, LNGT-WELD × LW-FAC)
+  // Standaard 1.0 (geen correctie). Waarde < 1.0 verlaagt toelaatbare spanning.
+  weldFactor?: number;
 }
 
 export interface FemSolverOutput {
@@ -1223,6 +1296,7 @@ export function solveFEM(input: FemSolverInput): FemSolverOutput {
     matConvergenceTol = 0.005,
     teeSpecs = {},
     teeNodeMap = {},
+    weldFactor = 1.0,
   } = input;
 
   // =====================================================
@@ -2430,7 +2504,7 @@ export function solveFEM(input: FemSolverInput): FemSolverOutput {
     const vm = calcVonMises(sh, sl);
 
     // Unity check (per-element SMYS)
-    const { ucRing, ucVM, uc } = calcUC(sh, vm, nodeMat.SMYS, designFactor, gammaM);
+    const { ucRing, ucVM, uc } = calcUC(sh, vm, nodeMat.SMYS, designFactor, gammaM, weldFactor);
 
     if (uc > maxUC) maxUC = uc;
     if (vm > maxVM) maxVM = vm;
@@ -2685,7 +2759,8 @@ export function solveAllLoadCases(
   designFactor?: number,
   gammaM?: number,
   teeSpecs?: Record<string, { type: string; dRun: number; tRun: number; dBrn: number; tBrn: number; te: number; r0: number }>,
-  teeNodeMap?: Record<string, string>
+  teeNodeMap?: Record<string, string>,
+  weldFactor?: number
 ): { perLC: FemSolverOutput[]; envelope: NodeResult[] } {
   const perLC: FemSolverOutput[] = [];
 
@@ -2700,6 +2775,7 @@ export function solveAllLoadCases(
       boundaryConditions, soilSprings,
       designFactor, gammaM,
       teeSpecs, teeNodeMap,
+      weldFactor,
       geometricNonlinear: hasSignificantLoad,
       materialNonlinear: hasSignificantLoad,
     });
