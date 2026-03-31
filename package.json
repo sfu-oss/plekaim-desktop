@@ -1,6 +1,6 @@
 {
   "name": "kaimple-desktop",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "KaimPLE desktop app (Electron + Next.js)",
   "main": "electron/main.js",

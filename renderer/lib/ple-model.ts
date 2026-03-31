@@ -216,6 +216,53 @@ export interface PleSoilctl {
 // Het centrale PleModel
 // ============================================================
 
+// ── Soil Wizard types (voor opslag in PleModel) ──
+
+export interface SoilWizardLayer {
+  soilTypeId: string;
+  thickness: number;  // mm
+}
+
+export interface SoilWizardProfile {
+  id: string;
+  name: string;
+  layers: SoilWizardLayer[];
+}
+
+export interface SoilWizardLocation {
+  nodeId: string;
+  nodeIndex: number;
+  profileId: string;
+  profileIdAfter?: string;
+  isStepChange?: boolean;
+  stepReason?: string;
+  isInterpolated?: boolean;
+}
+
+export interface SoilWizardSettings {
+  gammaWater: number;
+  installMethod: "trench_uncompressed" | "trench_compressed" | "boring" | "hdd";
+  nenVersion: "2020" | "1992";
+  useRealTopsoil: boolean;
+}
+
+export interface SoilWizardResult {
+  nodeId: string;
+  nodeIndex: number;
+  KLH: number;    // kN/m²
+  KLS: number;    // kN/m²
+  KLT: number;    // kN/m²
+  RVS: number;    // kN/m
+  RVT: number;    // kN/m
+  RH: number;     // kN/m
+  F: number;      // kN/m²
+  UF: number;     // mm
+  sigmaK: number; // kN/m²
+  H_cover: number; // mm
+}
+
+// ============================================================
+
 export interface PleModel {
   // Structurele data (bewerkbaar via Editor)
   nodes: PleNode[];
@@ -244,6 +291,12 @@ export interface PleModel {
   origin: PleOrigin;
   geomctl: PleGeomctl;
   soilctl: PleSoilctl;
+
+  // Soil Wizard data (optioneel — als gebruiker de wizard heeft gedraaid)
+  soilWizardProfiles?: SoilWizardProfile[];
+  soilWizardLocations?: SoilWizardLocation[];
+  soilWizardSettings?: SoilWizardSettings;
+  soilWizardResults?: SoilWizardResult[];
 
   // Afgeleid (wordt geregenereerd door rebuildTopology)
   _elements: FemElement[];
@@ -782,6 +835,25 @@ export function parseSheetsToModel(sheets: Record<string, any[][]>): PleModel {
     _polydifUnitsRow: unitsRow,
   };
 
+  // Importeer GENSOIL resultaten als die bestaan
+  const gensoilRows = sheetToObjects(sheets.GENSOIL || []);
+  if (gensoilRows.length > 0) {
+    model.soilWizardResults = gensoilRows.map((r, i) => ({
+      nodeId: normalizeId(r.IDENT),
+      nodeIndex: i,
+      KLH: toNum(r.KLH) || 0,
+      KLS: toNum(r.KLS) || 0,
+      KLT: toNum(r.KLT) || 0,
+      RVS: toNum(r.RVS) || 0,
+      RVT: toNum(r.RVT) || 0,
+      RH: toNum(r.RH) || 0,
+      F: toNum(r.F) || 0,
+      UF: toNum(r.UF) || 0,
+      sigmaK: toNum(r.SIGMAK) || 0,
+      H_cover: toNum(r.H_COVER) || 0,
+    }));
+  }
+
   // Bouw element topologie
   rebuildTopology(model);
 
@@ -1188,6 +1260,21 @@ export function modelToRawSheets(model: PleModel): Record<string, any[][]> {
     [{ key: "Identifier" }, { key: "SECTREF" }],
   );
 
+  // GENSOIL — Soil Wizard resultaten (per-node grondparameters)
+  if (model.soilWizardResults && model.soilWizardResults.length > 0) {
+    const swRes = model.soilWizardResults;
+    sheets.GENSOIL = [
+      [" ", "IDENT", "KLH", "KLS", "KLT", "RVS", "RVT", "RH", "F", "UF", "SIGMAK", "H_COVER"],
+      [" ", " ", "kN/m²", "kN/m²", "kN/m²", "kN/m", "kN/m", "kN/m", "kN/m²", "mm", "kN/m²", "mm"],
+      ...swRes.map((r, i) => [
+        i + 1, r.nodeId,
+        +r.KLH.toFixed(1), +r.KLS.toFixed(1), +r.KLT.toFixed(1),
+        +r.RVS.toFixed(2), +r.RVT.toFixed(2), +r.RH.toFixed(2),
+        +r.F.toFixed(2), +r.UF.toFixed(1), +r.sigmaK.toFixed(1), +r.H_cover.toFixed(0),
+      ]),
+    ];
+  }
+
   return sheets;
 }
 
@@ -1321,6 +1408,7 @@ export function modelToLegacy(model: PleModel): {
 
     // rawSheets worden afgeleid van het model
     _rawSheets: modelToRawSheets(model),
+    soilWizardResults: model.soilWizardResults || [],
   };
 
   return { nodes, elements, meta };

@@ -4,7 +4,8 @@ import React, { useEffect, useMemo, useState } from "react";
 import Ple3DViewer from "../../components/Ple3DViewer";
 import PlePipeDraw from "./PlePipeDraw";
 import PleEditor from "./PleEditor";
-import { parseSheetsToModel, buildFemInput, modelToLegacy, modelToRawSheets, type PleModel } from "../../lib/ple-model";
+import PleSoilWizard, { type SoilParameters } from "./PleSoilWizard";
+import { parseSheetsToModel, buildFemInput, modelToLegacy, modelToRawSheets, type PleModel, type SoilWizardResult } from "../../lib/ple-model";
 import * as XLSX from "xlsx";
 
 // ============================================================
@@ -47,6 +48,26 @@ const SOIL_TYPES = {
   "Grind": { gamma: 18, phi: 35, c: 0, k_h: 15000, k_v_up: 5000, k_v_down: 25000, E_soil: 40 },
   "Aangevoerde grond": { gamma: 16, phi: 25, c: 5, k_h: 3000, k_v_up: 1000, k_v_down: 6000, E_soil: 10 },
 } as const;
+
+/**
+ * Converteert Soil Wizard resultaten naar FEM solver soilSprings formaat.
+ * Wizard output is in kN/m² en kN/m; FEM solver verwacht N/mm eenheden.
+ */
+function wizardResultsToSoilSprings(results: SoilWizardResult[]): any[] {
+  return results.map(r => ({
+    nodeId: r.nodeId,
+    // Stijfheden: kN/m² → N/mm³ (÷1e6) — maar wizard KLH is al in kN/m²
+    // FEM solver verwacht kh in N/mm³
+    kh: r.KLH / 1e6,         // kN/m² → N/mm³
+    kv_up: r.KLT / 1e6,      // kN/m² → N/mm³
+    kv_down: r.KLS / 1e6,    // kN/m² → N/mm³
+    kAxial: r.F / 1e6,       // wrijvingsstijfheid kN/m² → N/mm³
+    // Maximale grondreacties (voor bilineair model)
+    rMaxSide: r.RH,   // kN/m (= N/mm)
+    rMaxDown: r.RVS,   // kN/m (= N/mm)
+    rMaxUp: r.RVT,     // kN/m (= N/mm)
+  }));
+}
 
 const NEN3650_FACTORS = {
   gamma_f_pressure: 1.39, gamma_f_soil: 1.0, gamma_f_traffic: 1.25,
@@ -1262,6 +1283,9 @@ function PLECalculator() {
             try {
               const model = parseSheetsToModel(data.meta._rawSheets);
               setPleModel(model);
+              if (model.soilWizardResults && model.soilWizardResults.length > 0) {
+                setSoilWizardResults(model.soilWizardResults);
+              }
             } catch { /* rawSheets corrupt, negeer */ }
           }
         }
@@ -1295,6 +1319,8 @@ function PLECalculator() {
     setFemResults([]);
     setFemAllLC([]);
     setPleModel(null);
+    setSoilWizardResults([]);
+    setShowSoilWizard(false);
     try { localStorage.removeItem("ple_import"); } catch {}
   };
 
@@ -1315,6 +1341,8 @@ function PLECalculator() {
   const [tlCustom, setTlCustom] = useState(40);
   const [cls, setCls] = useState(1);
   const [showRoadmap, setShowRoadmap] = useState(true);
+  const [showSoilWizard, setShowSoilWizard] = useState(false);
+  const [soilWizardResults, setSoilWizardResults] = useState<SoilWizardResult[]>([]);
 
   const R = useMemo(() => {
     // Gebruik ISTROP data uit Excel als beschikbaar, anders fallback naar hardcoded MATERIALS
@@ -1387,6 +1415,7 @@ function PLECalculator() {
         return "partial";
 
       case "soil":
+        if (soilWizardResults.length > 0) return "complete";
         if (!hasImport && soilName === "Zand (droog)" && Hc === 1.2) return "empty";
         if (soilName && Hc > 0) return "complete";
         return "partial";
@@ -2160,6 +2189,69 @@ function PLECalculator() {
   // ---- TAB: SOIL ----
   const tabSoil = (
     <div style={grid2}>
+      {/* Soil Wizard toggle */}
+      <div style={{ gridColumn: mobile ? undefined : "1 / -1", display: "flex", alignItems: "center", gap: 12, marginBottom: -8 }}>
+        <button onClick={() => setShowSoilWizard(!showSoilWizard)} style={{
+          padding: "6px 14px", borderRadius: 6, fontSize: 12, fontWeight: 600, fontFamily: css.mono,
+          background: showSoilWizard ? css.accent : "transparent",
+          color: showSoilWizard ? "#fff" : css.accent,
+          border: `1px solid ${css.accent}`, cursor: "pointer",
+        }}>
+          {showSoilWizard ? "◀ Eenvoudig" : "🧙 Soil Wizard ▶"}
+        </button>
+        {soilWizardResults.length > 0 && !showSoilWizard && (
+          <span style={{ fontSize: 11, color: css.green, fontFamily: css.mono }}>
+            ✓ Soil Wizard: {soilWizardResults.length} nodes berekend
+          </span>
+        )}
+      </div>
+
+      {/* Soil Wizard (geavanceerd, per-node grondparameters) */}
+      {showSoilWizard && importedNodes.length > 0 && (
+        <div style={{ gridColumn: mobile ? undefined : "1 / -1" }}>
+          <PleSoilWizard
+            nodes={importedNodes}
+            elements={importedEls}
+            glevel={importedMeta?.glevelList || importedMeta?.coverMap ? 
+              Object.entries(importedMeta?.coverMap || {}).map(([id, z]: [string, any], i: number) => ({
+                nodeIndex: importedNodes.findIndex((n: any) => n.id === id),
+                z: typeof z === "number" ? z : 0,
+              })).filter(g => g.nodeIndex >= 0) : []}
+            onApplySoilParameters={(params: SoilParameters[]) => {
+              const results: SoilWizardResult[] = params.map(p => ({
+                nodeId: p.nodeId,
+                nodeIndex: p.nodeIndex,
+                KLH: p.KLH,
+                KLS: p.KLS,
+                KLT: p.KLT,
+                RVS: p.RVS,
+                RVT: p.RVT,
+                RH: p.RH,
+                F: p.F,
+                UF: p.UF,
+                sigmaK: p.sigmaK,
+                H_cover: p.H_cover,
+              }));
+              setSoilWizardResults(results);
+              // Sla ook op in pleModel als die beschikbaar is
+              if (pleModel) {
+                setPleModel({ ...pleModel, soilWizardResults: results });
+              }
+            }}
+            css={css}
+          />
+        </div>
+      )}
+
+      {/* Waarschuwing als geen model geladen maar wizard open */}
+      {showSoilWizard && importedNodes.length === 0 && (
+        <div style={{ gridColumn: mobile ? undefined : "1 / -1", padding: 16, background: "rgba(239,68,68,0.06)", borderRadius: 8, border: "1px solid rgba(239,68,68,0.2)" }}>
+          <span style={{ fontSize: 12, color: css.red }}>⚠️ Importeer eerst een PLE4Win model om de Soil Wizard te gebruiken.</span>
+        </div>
+      )}
+
+      {/* Eenvoudige grond-invoer (standaard view) */}
+      {!showSoilWizard && <>
       {/* Grond-invoer (verplaatst van Invoer tab) */}
       <Section icon="🏔️" title="Grondcondities" sub="Bodem, dekking en verkeersbelasting">
         <Select label="Grondtype" value={soilName} onChange={setSoilName} options={Object.keys(SOIL_TYPES)} />
@@ -2292,6 +2384,7 @@ function PLECalculator() {
           </Section>
         </div>
       )}
+      </>}
     </div>
   );
   const tabReport = (
@@ -2525,6 +2618,10 @@ function PLECalculator() {
           if (parsed.meta._rawSheets) {
             const model = parseSheetsToModel(parsed.meta._rawSheets);
             setPleModel(model);
+            // Laad Soil Wizard resultaten als GENSOIL tab aanwezig was
+            if (model.soilWizardResults && model.soilWizardResults.length > 0) {
+              setSoilWizardResults(model.soilWizardResults);
+            }
           }
 
           // FEM berekening uitvoeren (stijfheidsmatrix solver)
@@ -2576,8 +2673,17 @@ function PLECalculator() {
               bcs.push({ nodeId: lastId, type: "infin" as any });
             }
 
-            // Bouw grondveren uit SOIL_TYPES + G-LEVEL coverMap
-            const soilSprings: any[] = [];
+            // Bouw grondveren — gebruik Soil Wizard resultaten als beschikbaar
+            let soilSprings: any[] = [];
+            const importedSwResults = parsed.meta.soilWizardResults || [];
+            if (importedSwResults.length > 0) {
+              // GENSOIL data uit Excel import
+              soilSprings = wizardResultsToSoilSprings(importedSwResults);
+            } else if (soilWizardResults.length > 0) {
+              // Wizard resultaten uit eerdere berekening
+              soilSprings = wizardResultsToSoilSprings(soilWizardResults);
+            } else {
+            // Fallback: globale grondveren uit SOIL_TYPES + G-LEVEL coverMap
             const coverMap = parsed.meta.coverMap || {};
             const globalCover = parsed.meta.cover || 500; // mm
             // Gebruik de geselecteerde grondsoort of default zand
@@ -2621,10 +2727,9 @@ function PLECalculator() {
                 nodeId: node.id,
                 kh, kv_up, kv_down,
                 kAxial: kh * 0.5,
-                // rMax NIET meegeven — solver berekent het zelf als kx_base × referentieverplaatsing
-                // Dit is robuuster voor modellen met zeer lange elementen
               });
             });
+            } // end else (fallback globale grondveren)
 
             // Prioriteit 4: per-element materiaal uit ISTROP
             const perElementMaterials = new Map<number, any>();
@@ -2890,8 +2995,12 @@ function PLECalculator() {
                       bcs.push({ nodeId: lastId, type: "infin" as any });
                     }
 
-                    // Bouw grondveren uit SOIL_TYPES + G-LEVEL coverMap
-                    const soilSprings: any[] = [];
+                    // Bouw grondveren — wizard override
+                    let soilSprings: any[] = [];
+                    const swRes2 = parsed.meta.soilWizardResults || soilWizardResults || [];
+                    if (swRes2.length > 0) {
+                      soilSprings = wizardResultsToSoilSprings(swRes2);
+                    } else {
                     const coverMap = parsed.meta.coverMap || {};
                     const globalCover = parsed.meta.cover || 500;
                     const soilKey = Object.keys(SOIL_TYPES)[0] as keyof typeof SOIL_TYPES;
@@ -2916,6 +3025,7 @@ function PLECalculator() {
                         rMaxAxial: passivePressure * (DPE / 1000) * 0.7,
                       });
                     });
+                    } // end else fallback
 
                     if (loadCases.length > 1) {
                       const result = solveAllLoadCases(
@@ -3051,7 +3161,11 @@ function PLECalculator() {
                   bcs.push({ nodeId: legacyNodes[legacyNodes.length - 1]?.id || `N${legacyNodes.length - 1}`, type: "infin" as any });
                 }
 
-                const soilSprings: any[] = [];
+                let soilSprings: any[] = [];
+                const swRes3 = legacyMeta.soilWizardResults || soilWizardResults || [];
+                if (swRes3.length > 0) {
+                  soilSprings = wizardResultsToSoilSprings(swRes3);
+                } else {
                 const coverMap = legacyMeta.coverMap || {};
                 const globalCover = legacyMeta.cover || 500;
                 const soilKey = Object.keys(SOIL_TYPES)[0] as keyof typeof SOIL_TYPES;
@@ -3064,6 +3178,7 @@ function PLECalculator() {
                   const kv_down = soilPropsVal.k_v_down * 1e-6;
                   soilSprings.push({ nodeId: node.id, kh, kv_up, kv_down, kAxial: kh * 0.5 });
                 });
+                } // end else fallback
 
                 const teeSpecsR: Record<string, any> = {};
                 const teeNodeMapR: Record<string, string> = {};
@@ -3757,7 +3872,7 @@ function PLECalculator() {
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <div>
                 <div style={{ fontSize: mobile?13:14, fontWeight: 700, letterSpacing: -0.5 }}>PLE Calculator</div>
-                {!mobile && <div style={{ fontSize: 11, color: css.dim }}>Pipeline Engineering — NEN 3650-2  •  v0.2.0</div>}
+                {!mobile && <div style={{ fontSize: 11, color: css.dim }}>Pipeline Engineering — NEN 3650-2  •  v0.2.1  •  v0.2.0</div>}
               </div>
               {/* Bestandsnaam indicator + download knop */}
               {importFileName && (
@@ -3821,6 +3936,8 @@ function PLECalculator() {
                         ["SUPANG",   "ED7D31"],
                         // Blauw = secties
                         ["SECTION",  "4472C4"],
+                        // Bruin = grondparameters (Soil Wizard output)
+                        ["GENSOIL",  "8B4513"],
                       ];
                       
                       for (const [name, color] of sheetDefs) {
