@@ -1,7 +1,9 @@
-const { app, BrowserWindow, shell, dialog, ipcMain } = require('electron');
+const { app, BrowserWindow, shell, dialog, protocol, net } = require('electron');
 const path = require('path');
+const fs = require('fs');
 const { autoUpdater } = require('electron-updater');
 const log = require('electron-log');
+const { pathToFileURL } = require('url');
 
 // ─── Logging ────────────────────────────────────────────────
 autoUpdater.logger = log;
@@ -9,7 +11,7 @@ autoUpdater.logger.transports.file.level = 'info';
 log.info('App starting...');
 
 // ─── Auto-updater config ────────────────────────────────────
-autoUpdater.autoDownload = false;            // Ask user first
+autoUpdater.autoDownload = false;
 autoUpdater.autoInstallOnAppQuit = true;
 
 const isDev = !app.isPackaged;
@@ -26,9 +28,7 @@ function sendStatus(text) {
 }
 
 // ─── Auto-update events ─────────────────────────────────────
-autoUpdater.on('checking-for-update', () => {
-  sendStatus('Controleren op updates...');
-});
+autoUpdater.on('checking-for-update', () => sendStatus('Controleren op updates...'));
 
 autoUpdater.on('update-available', (info) => {
   sendStatus(`Update beschikbaar: v${info.version}`);
@@ -41,15 +41,11 @@ autoUpdater.on('update-available', (info) => {
     defaultId: 0,
     cancelId: 1,
   }).then(({ response }) => {
-    if (response === 0) {
-      autoUpdater.downloadUpdate();
-    }
+    if (response === 0) autoUpdater.downloadUpdate();
   });
 });
 
-autoUpdater.on('update-not-available', () => {
-  sendStatus('App is up-to-date.');
-});
+autoUpdater.on('update-not-available', () => sendStatus('App is up-to-date.'));
 
 autoUpdater.on('download-progress', (progress) => {
   sendStatus(`Downloaden: ${Math.round(progress.percent)}%`);
@@ -66,9 +62,7 @@ autoUpdater.on('update-downloaded', (info) => {
     defaultId: 0,
     cancelId: 1,
   }).then(({ response }) => {
-    if (response === 0) {
-      autoUpdater.quitAndInstall(false, true);
-    }
+    if (response === 0) autoUpdater.quitAndInstall(false, true);
   });
 });
 
@@ -76,6 +70,28 @@ autoUpdater.on('error', (err) => {
   sendStatus(`Update error: ${err.message}`);
   log.error('AutoUpdater error:', err);
 });
+
+// ─── Custom protocol: serve renderer/out as app:// ──────────
+const RENDERER_OUT = path.join(__dirname, '..', 'renderer', 'out');
+
+function getMimeType(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  const types = {
+    '.html': 'text/html',
+    '.js': 'application/javascript',
+    '.css': 'text/css',
+    '.json': 'application/json',
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.svg': 'image/svg+xml',
+    '.ico': 'image/x-icon',
+    '.woff': 'font/woff',
+    '.woff2': 'font/woff2',
+    '.ttf': 'font/ttf',
+    '.map': 'application/json',
+  };
+  return types[ext] || 'application/octet-stream';
+}
 
 // ─── Window ─────────────────────────────────────────────────
 function createWindow() {
@@ -96,8 +112,8 @@ function createWindow() {
     mainWindow.loadURL('http://localhost:3000/ple');
     mainWindow.webContents.openDevTools({ mode: 'detach' });
   } else {
-    const plePath = path.join(__dirname, '..', 'renderer', 'out', 'ple', 'index.html');
-    mainWindow.loadFile(plePath);
+    // Use custom protocol so all paths resolve correctly
+    mainWindow.loadURL('app://renderer/ple/');
   }
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -105,18 +121,44 @@ function createWindow() {
     return { action: 'deny' };
   });
 
-  mainWindow.on('closed', () => {
-    mainWindow = null;
-  });
-
+  mainWindow.on('closed', () => { mainWindow = null; });
   return mainWindow;
 }
 
 // ─── App lifecycle ──────────────────────────────────────────
 app.whenReady().then(() => {
+  // Register custom protocol to serve static files from renderer/out
+  protocol.handle('app', (request) => {
+    // app://renderer/ple/ → renderer/out/ple/index.html
+    // app://renderer/_next/static/chunks/abc.js → renderer/out/_next/static/chunks/abc.js
+    let url = request.url.replace('app://renderer', '');
+
+    // Remove query strings and hashes
+    url = url.split('?')[0].split('#')[0];
+
+    // Decode URI components
+    url = decodeURIComponent(url);
+
+    // If path ends with / or has no extension, serve index.html
+    if (url.endsWith('/') || !path.extname(url)) {
+      url = url.endsWith('/') ? url + 'index.html' : url + '/index.html';
+    }
+
+    // Resolve the full path
+    const filePath = path.join(RENDERER_OUT, url);
+
+    // Security: prevent path traversal
+    if (!filePath.startsWith(RENDERER_OUT)) {
+      return new Response('Forbidden', { status: 403 });
+    }
+
+    // Convert to file URL and use net.fetch
+    const fileUrl = pathToFileURL(filePath).href;
+    return net.fetch(fileUrl);
+  });
+
   createWindow();
 
-  // Check for updates after window loads (delay 3s to not block startup)
   if (!isDev) {
     setTimeout(() => {
       autoUpdater.checkForUpdates().catch(err => {
