@@ -1,9 +1,9 @@
-const { app, BrowserWindow, shell, dialog, protocol, net } = require('electron');
+const { app, BrowserWindow, shell, dialog, protocol, net, ipcMain } = require('electron');
 const path = require('path');
-const fs = require('fs');
 const { autoUpdater } = require('electron-updater');
 const log = require('electron-log');
 const { pathToFileURL } = require('url');
+const { validateKey, saveLicense, loadLicense, checkLicense, removeLicense } = require('./license');
 
 // ─── Logging ────────────────────────────────────────────────
 autoUpdater.logger = log;
@@ -71,26 +71,138 @@ autoUpdater.on('error', (err) => {
   log.error('AutoUpdater error:', err);
 });
 
-// ─── Custom protocol: serve renderer/out as app:// ──────────
-const RENDERER_OUT = path.join(__dirname, '..', 'renderer', 'out');
+// ─── License activation dialog ──────────────────────────────
+async function showActivationDialog() {
+  const { response } = await dialog.showMessageBox(mainWindow, {
+    type: 'question',
+    title: 'KaimPLE - Licentie Activatie',
+    message: 'Welkom bij KaimPLE!',
+    detail: 'Voer je licentiesleutel in om de software te activeren.\n\nNeem contact op voor een licentie.',
+    buttons: ['Licentie Invoeren', 'Afsluiten'],
+    defaultId: 0,
+    cancelId: 1,
+  });
 
-function getMimeType(filePath) {
-  const ext = path.extname(filePath).toLowerCase();
-  const types = {
-    '.html': 'text/html',
-    '.js': 'application/javascript',
-    '.css': 'text/css',
-    '.json': 'application/json',
-    '.png': 'image/png',
-    '.jpg': 'image/jpeg',
-    '.svg': 'image/svg+xml',
-    '.ico': 'image/x-icon',
-    '.woff': 'font/woff',
-    '.woff2': 'font/woff2',
-    '.ttf': 'font/ttf',
-    '.map': 'application/json',
-  };
-  return types[ext] || 'application/octet-stream';
+  if (response === 1) {
+    app.quit();
+    return false;
+  }
+
+  // Show input dialog (use a simple prompt approach)
+  return await promptLicenseKey();
+}
+
+async function promptLicenseKey() {
+  // Create a small activation window
+  const activationWin = new BrowserWindow({
+    width: 520,
+    height: 380,
+    parent: mainWindow,
+    modal: true,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    backgroundColor: '#0b1020',
+    webPreferences: {
+      contextIsolation: false,
+      nodeIntegration: true,
+    }
+  });
+
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, 'Segoe UI', sans-serif; background: #0f172a; color: #e2e8f0; display: flex; align-items: center; justify-content: center; height: 100vh; }
+    .container { width: 440px; padding: 32px; }
+    h2 { font-size: 20px; margin-bottom: 8px; color: #38bdf8; }
+    p { font-size: 13px; color: #94a3b8; margin-bottom: 20px; }
+    input { width: 100%; padding: 12px 14px; border: 1px solid #334155; border-radius: 8px; background: #1e293b; color: #f1f5f9; font-size: 14px; font-family: 'JetBrains Mono', monospace; outline: none; }
+    input:focus { border-color: #38bdf8; }
+    input::placeholder { color: #475569; }
+    .btn { width: 100%; padding: 12px; border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; margin-top: 12px; }
+    .btn-primary { background: #0ea5e9; color: white; }
+    .btn-primary:hover { background: #0284c7; }
+    .btn-secondary { background: transparent; color: #94a3b8; border: 1px solid #334155; }
+    .btn-secondary:hover { background: #1e293b; }
+    .error { color: #f87171; font-size: 12px; margin-top: 8px; display: none; }
+    .success { color: #4ade80; font-size: 12px; margin-top: 8px; display: none; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>🔑 Licentie Activatie</h2>
+    <p>Voer je KaimPLE licentiesleutel in om de software te activeren.</p>
+    <input id="key" type="text" placeholder="KAIM-xxxx..." autofocus />
+    <div class="error" id="error"></div>
+    <div class="success" id="success"></div>
+    <button class="btn btn-primary" id="activate" onclick="activate()">Activeren</button>
+    <button class="btn btn-secondary" onclick="require('electron').ipcRenderer.send('license-cancel')">Annuleren</button>
+  </div>
+  <script>
+    const { ipcRenderer } = require('electron');
+    function activate() {
+      const key = document.getElementById('key').value.trim();
+      if (!key) return;
+      document.getElementById('error').style.display = 'none';
+      document.getElementById('activate').textContent = 'Valideren...';
+      ipcRenderer.send('license-activate', key);
+    }
+    document.getElementById('key').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') activate();
+    });
+    ipcRenderer.on('license-result', (_, result) => {
+      if (result.valid) {
+        document.getElementById('success').textContent = 'Licentie geactiveerd! ✅';
+        document.getElementById('success').style.display = 'block';
+        document.getElementById('error').style.display = 'none';
+        setTimeout(() => ipcRenderer.send('license-ok'), 1000);
+      } else {
+        document.getElementById('error').textContent = result.error;
+        document.getElementById('error').style.display = 'block';
+        document.getElementById('activate').textContent = 'Activeren';
+      }
+    });
+  </script>
+</body>
+</html>`;
+
+  activationWin.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+  activationWin.setMenuBarVisibility(false);
+
+  return new Promise((resolve) => {
+    ipcMain.once('license-activate', (event, key) => {
+      const result = validateKey(key);
+      if (result.valid) {
+        saveLicense(key);
+        log.info(`License activated: ${result.payload.email} (${result.payload.plan}, expires ${result.payload.expiresAt})`);
+      }
+      event.sender.send('license-result', result);
+    });
+
+    ipcMain.once('license-ok', () => {
+      activationWin.close();
+      resolve(true);
+    });
+
+    ipcMain.once('license-cancel', () => {
+      activationWin.close();
+      resolve(false);
+    });
+
+    activationWin.on('closed', () => {
+      resolve(false);
+    });
+  });
+}
+
+// ─── Custom protocol: serve renderer/out as app:// ──────────
+const RENDERER_OUT_REL = path.join('renderer', 'out');
+
+function getRendererOut() {
+  if (isDev) return path.join(__dirname, '..', RENDERER_OUT_REL);
+  return path.join(process.resourcesPath, 'app.asar', RENDERER_OUT_REL);
 }
 
 // ─── Window ─────────────────────────────────────────────────
@@ -112,7 +224,6 @@ function createWindow() {
     mainWindow.loadURL('http://localhost:3000/ple');
     mainWindow.webContents.openDevTools({ mode: 'detach' });
   } else {
-    // Use custom protocol so all paths resolve correctly
     mainWindow.loadURL('app://renderer/ple/');
   }
 
@@ -126,40 +237,48 @@ function createWindow() {
 }
 
 // ─── App lifecycle ──────────────────────────────────────────
-app.whenReady().then(() => {
-  // Register custom protocol to serve static files from renderer/out
+app.whenReady().then(async () => {
+  // Register custom protocol
+  const rendererOut = getRendererOut();
   protocol.handle('app', (request) => {
-    // app://renderer/ple/ → renderer/out/ple/index.html
-    // app://renderer/_next/static/chunks/abc.js → renderer/out/_next/static/chunks/abc.js
     let url = request.url.replace('app://renderer', '');
-
-    // Remove query strings and hashes
     url = url.split('?')[0].split('#')[0];
-
-    // Decode URI components
     url = decodeURIComponent(url);
-
-    // If path ends with / or has no extension, serve index.html
     if (url.endsWith('/') || !path.extname(url)) {
       url = url.endsWith('/') ? url + 'index.html' : url + '/index.html';
     }
-
-    // Resolve the full path
-    const filePath = path.join(RENDERER_OUT, url);
-
-    // Security: prevent path traversal
-    if (!filePath.startsWith(RENDERER_OUT)) {
-      return new Response('Forbidden', { status: 403 });
-    }
-
-    // Convert to file URL and use net.fetch
-    const fileUrl = pathToFileURL(filePath).href;
-    return net.fetch(fileUrl);
+    const filePath = path.join(rendererOut, url);
+    return net.fetch(pathToFileURL(filePath).href);
   });
 
   createWindow();
 
+  // Check license
   if (!isDev) {
+    const status = checkLicense();
+    if (!status.licensed) {
+      log.info(`License check: ${status.error}`);
+      const activated = await promptLicenseKey();
+      if (!activated) {
+        app.quit();
+        return;
+      }
+    } else {
+      log.info(`Licensed: ${status.payload.email} (${status.payload.plan}, ${status.daysLeft} days left)`);
+      
+      // Warn if expiring soon
+      if (status.daysLeft <= 14) {
+        dialog.showMessageBox(mainWindow, {
+          type: 'warning',
+          title: 'Licentie Verloopt Binnenkort',
+          message: `Je KaimPLE licentie verloopt over ${status.daysLeft} dagen.`,
+          detail: 'Neem contact op om je licentie te verlengen.',
+          buttons: ['OK'],
+        });
+      }
+    }
+
+    // Check for updates
     setTimeout(() => {
       autoUpdater.checkForUpdates().catch(err => {
         log.error('Update check failed:', err);

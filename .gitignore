@@ -8,3 +8,4 @@ dist/
 *.exe
 *.AppImage
 .DS_Store
+license-tools/private.pem
