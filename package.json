@@ -1,8 +1,8 @@
 {
-  "name": "plekaim-desktop",
+  "name": "kaimple-desktop",
   "version": "0.1.5",
   "private": true,
-  "description": "PleKaim desktop app (Electron + Next.js)",
+  "description": "KaimPLE desktop app (Electron + Next.js)",
   "main": "electron/main.js",
   "author": "sfu-oss",
   "scripts": {
@@ -15,8 +15,8 @@
     "postinstall": "cd renderer && npm install"
   },
   "build": {
-    "appId": "com.plekaim.desktop",
-    "productName": "PleKaim",
+    "appId": "com.kaimple.desktop",
+    "productName": "KaimPLE",
     "files": [
       "electron/**/*",
       "renderer/out/**/*",
@@ -36,7 +36,7 @@
     "publish": {
       "provider": "github",
       "owner": "sfu-oss",
-      "repo": "plekaim-desktop",
+      "repo": "kaimple-desktop",
       "private": true
     },
     "extraMetadata": {

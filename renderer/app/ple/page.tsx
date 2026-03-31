@@ -1201,7 +1201,7 @@ const TABS = [
 // ============================================================
 function PLECalculator() {
   const mobile = useIsMobile();
-  const session = { user: { email: "desktop@plekaim.com", isAdmin: true } } as any;
+  const session = { user: { email: "desktop@kaimple.com", isAdmin: true } } as any;
   // Desktop: no router needed
   const [tab, setTab] = useState("input");
 

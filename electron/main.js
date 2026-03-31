@@ -35,7 +35,7 @@ autoUpdater.on('update-available', (info) => {
   dialog.showMessageBox(mainWindow, {
     type: 'info',
     title: 'Update Beschikbaar',
-    message: `PleKaim v${info.version} is beschikbaar.`,
+    message: `KaimPLE v${info.version} is beschikbaar.`,
     detail: 'Wil je de update nu downloaden?',
     buttons: ['Download', 'Later'],
     defaultId: 0,
@@ -56,7 +56,7 @@ autoUpdater.on('update-downloaded', (info) => {
   dialog.showMessageBox(mainWindow, {
     type: 'info',
     title: 'Update Klaar',
-    message: `PleKaim v${info.version} is gedownload.`,
+    message: `KaimPLE v${info.version} is gedownload.`,
     detail: 'De app wordt nu herstart om de update te installeren.',
     buttons: ['Herstart Nu', 'Later'],
     defaultId: 0,

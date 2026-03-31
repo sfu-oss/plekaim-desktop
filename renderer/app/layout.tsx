@@ -1,5 +1,5 @@
 export const metadata = {
-  title: "PleKaim Desktop",
+  title: "KaimPLE Desktop",
   description: "Pipeline Engineering Calculator",
 };
 
