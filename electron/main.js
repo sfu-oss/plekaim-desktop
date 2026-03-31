@@ -243,6 +243,58 @@ ipcMain.handle('get-license-info', async () => {
   return status;
 });
 
+ipcMain.handle('export-license-file', async (event, payload) => {
+  const { dialog } = require('electron');
+  const fs = require('fs');
+  
+  const startDate = new Date().toISOString().split('T')[0];
+  const endDate = payload.expiresAt ? payload.expiresAt.split('T')[0] : 'onbekend';
+  
+  const content = [
+    '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
+    '       KaimPLE Licentie Gegevens',
+    '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
+    '',
+    `Naam:          ${payload.name || '(niet opgegeven)'}`,
+    `Email:         ${payload.email}`,
+    `Plan:          ${payload.plan.toUpperCase()}`,
+    `Geldig:        ${payload.days} dagen`,
+    `Ingangsdatum:  ${startDate}`,
+    `Einddatum:     ${endDate}`,
+    '',
+    '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
+    '  Licentie Key (kopieer deze):',
+    '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
+    '',
+    payload.key,
+    '',
+    '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
+    '',
+    'Instructies:',
+    '1. Open KaimPLE',
+    '2. Ga naar het licentie scherm',
+    '3. Voer je email in en plak de key',
+    '4. Klik op Activeren',
+    '',
+    'Vragen? Neem contact op via support@kaimple.com',
+  ].join('\n');
+  
+  const safeName = (payload.name || payload.email).replace(/[^a-zA-Z0-9]/g, '_');
+  const defaultPath = `KaimPLE_Licentie_${safeName}.txt`;
+  
+  const result = await dialog.showSaveDialog({
+    title: 'Licentie exporteren',
+    defaultPath: defaultPath,
+    filters: [{ name: 'Tekstbestand', extensions: ['txt'] }],
+  });
+  
+  if (!result.canceled && result.filePath) {
+    fs.writeFileSync(result.filePath, content, 'utf-8');
+    return { success: true, path: result.filePath };
+  }
+  return { success: false };
+});
+
 // ─── Custom protocol: serve renderer/out as app:// ──────────
 const RENDERER_OUT_REL = path.join('renderer', 'out');
 

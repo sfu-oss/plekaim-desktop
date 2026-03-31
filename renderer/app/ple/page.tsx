@@ -3591,9 +3591,20 @@ function PLECalculator() {
             <div style={{ fontSize: 10, fontFamily: css.mono, color: css.text, wordBreak: "break-all", userSelect: "all", cursor: "text", padding: 8, background: css.card, borderRadius: 4 }}>
               {generatedKey}
             </div>
-            <button onClick={() => navigator.clipboard.writeText(generatedKey)} style={{ marginTop: 8, padding: "6px 14px", background: "rgba(59,130,246,0.1)", border: `1px solid ${css.border}`, borderRadius: 6, color: css.accent, fontSize: 11, cursor: "pointer", fontFamily: css.mono }}>
-              📋 Kopieer
-            </button>
+            <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+              <button onClick={() => { ((window as any).electronAPI?.copyToClipboard || navigator.clipboard.writeText.bind(navigator.clipboard))(generatedKey); }} style={{ padding: "6px 14px", background: "rgba(59,130,246,0.1)", border: `1px solid ${css.border}`, borderRadius: 6, color: css.accent, fontSize: 11, cursor: "pointer", fontFamily: css.mono }}>
+                📋 Kopieer
+              </button>
+              <button onClick={async () => {
+                const api = (window as any).electronAPI;
+                if (api?.exportLicenseFile) {
+                  const endDate = new Date(Date.now() + parseInt(adminDays) * 86400000).toISOString();
+                  await api.exportLicenseFile({ key: generatedKey, email: adminEmail, name: adminName, plan: adminPlan, days: adminDays, expiresAt: endDate });
+                }
+              }} style={{ padding: "6px 14px", background: "rgba(34,197,94,0.1)", border: `1px solid rgba(34,197,94,0.3)`, borderRadius: 6, color: css.green, fontSize: 11, cursor: "pointer", fontFamily: css.mono }}>
+                💾 Exporteer .txt
+              </button>
+            </div>
           </div>
         )}
       </Section>
@@ -3607,7 +3618,7 @@ function PLECalculator() {
                   <div style={{ fontSize: 12, fontWeight: 600, color: css.text }}>{k.name || k.email}</div>
                   <div style={{ fontSize: 10, color: css.dim, fontFamily: css.mono }}>{k.email} · {k.plan} · {k.days}d · {k.date}</div>
                 </div>
-                <button onClick={() => navigator.clipboard.writeText(k.key)} style={{ padding: "4px 10px", background: "rgba(59,130,246,0.1)", border: `1px solid ${css.border}`, borderRadius: 4, color: css.accent, fontSize: 10, cursor: "pointer" }}>📋</button>
+                <button onClick={() => ((window as any).electronAPI?.copyToClipboard || navigator.clipboard.writeText.bind(navigator.clipboard))(k.key)} style={{ padding: "4px 10px", background: "rgba(59,130,246,0.1)", border: `1px solid ${css.border}`, borderRadius: 4, color: css.accent, fontSize: 10, cursor: "pointer" }}>📋</button>
               </div>
             ))}
           </div>
