@@ -1494,8 +1494,8 @@ function PLECalculator() {
 
   // ---- TAB: 3D MODEL ----
   const tab3d = (
-    <div>
-      <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 160px)" }}>
+      <div style={{ display: "flex", gap: 6, marginBottom: 6, flexWrap: "wrap", flexShrink: 0 }}>
         <Badge pass={n.hp} label="Ring" unity={n.hu} compact={mobile} />
         <Badge pass={n.vp} label="VM" unity={n.vu} compact={mobile} />
         <Badge pass={n.ok} label="Totaal" unity={n.cu} compact={mobile} />

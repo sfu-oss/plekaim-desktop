@@ -836,13 +836,13 @@ export default function Ple3DViewer({
 
   // ═══ RENDER UI ═══
   return (
-    <div style={{ position: "relative", width: "100%", height: mob ? "65vh" : "78vh", borderRadius: 12, overflow: "hidden", border: `1px solid ${panelBorder}`, display: "flex" }}>
+    <div style={{ position: "relative", width: "100%", height: mob ? "55vh" : "calc(100vh - 180px)", borderRadius: 12, overflow: "hidden", border: `1px solid ${panelBorder}`, display: "flex" }}>
       {/* ── 3D Canvas ── */}
       <div ref={mountRef} style={{ flex: 1, height: "100%" }} />
 
       {/* ═══ RIGHT PANEL — PLE4Win-stijl ═══ */}
       <div style={{
-        width: mob ? 180 : 220, height: "100%", background: panelBg,
+        width: mob ? 160 : 180, height: "100%", background: panelBg,
         borderLeft: `1px solid ${panelBorder}`, overflowY: "auto", overflowX: "hidden",
         padding: "8px 10px", display: "flex", flexDirection: "column", gap: 8,
         fontSize: 10, fontFamily: F,
