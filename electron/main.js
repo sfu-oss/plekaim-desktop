@@ -295,6 +295,46 @@ ipcMain.handle('export-license-file', async (event, payload) => {
   return { success: false };
 });
 
+
+// ─── Local imports storage (replaces /api/dhstress/imports) ─────────
+const IMPORTS_DIR = path.join(app.getPath('userData'), 'imports');
+
+ipcMain.handle('imports-list', async () => {
+  const fs = require('fs');
+  if (!fs.existsSync(IMPORTS_DIR)) fs.mkdirSync(IMPORTS_DIR, { recursive: true });
+  const files = fs.readdirSync(IMPORTS_DIR).filter(f => f.endsWith('.json'));
+  const items = files.map(f => {
+    try {
+      const data = JSON.parse(fs.readFileSync(path.join(IMPORTS_DIR, f), 'utf-8'));
+      return { id: f.replace('.json', ''), ...data };
+    } catch { return null; }
+  }).filter(Boolean).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  return { items };
+});
+
+ipcMain.handle('imports-save', async (event, { name, data }) => {
+  const fs = require('fs');
+  if (!fs.existsSync(IMPORTS_DIR)) fs.mkdirSync(IMPORTS_DIR, { recursive: true });
+  const id = Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+  const record = { name, date: new Date().toISOString(), data };
+  fs.writeFileSync(path.join(IMPORTS_DIR, id + '.json'), JSON.stringify(record));
+  return { id, ...record };
+});
+
+ipcMain.handle('imports-get', async (event, { id }) => {
+  const fs = require('fs');
+  const filePath = path.join(IMPORTS_DIR, id + '.json');
+  if (!fs.existsSync(filePath)) return null;
+  return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+});
+
+ipcMain.handle('imports-delete', async (event, { id }) => {
+  const fs = require('fs');
+  const filePath = path.join(IMPORTS_DIR, id + '.json');
+  if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  return { success: true };
+});
+
 // ─── Custom protocol: serve renderer/out as app:// ──────────
 const RENDERER_OUT_REL = path.join('renderer', 'out');
 

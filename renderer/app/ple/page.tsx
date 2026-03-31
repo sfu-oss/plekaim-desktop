@@ -1210,7 +1210,7 @@ function PLECalculator() {
   const tabs = useMemo(() => (isAdmin ? TABS : TABS.filter(t => t.id !== "dhstress")), [isAdmin]);
 
   useEffect(() => {
-    fetch("/api/dhstress/imports").then(r=>r.json()).then(d=>setSavedImports(d.items||[])).catch(()=>{});
+    const api = (window as any).electronAPI; if (api?.importsList) { api.importsList().then((d: any) => setSavedImports(d?.items || [])).catch(() => {}); }
   }, []);
 
   const [matName, setMatName] = useState("API 5L X52");
@@ -2802,8 +2802,9 @@ function PLECalculator() {
           const fd = new FormData();
           fd.append("file", f);
           fd.append("meta", JSON.stringify({ fileName: f.name, size: f.size }));
-          await fetch("/api/dhstress/imports", { method: "POST", body: fd });
-          const d = await fetch("/api/dhstress/imports").then(r=>r.json());
+          const api2 = (window as any).electronAPI;
+          if (api2?.importsSave) { const file = fd.get("file") as File; const buf = await file.arrayBuffer(); const b64 = btoa(String.fromCharCode(...new Uint8Array(buf))); await api2.importsSave({ name: file.name, data: b64 }); }
+          const d = await ((window as any).electronAPI?.importsList?.() || Promise.resolve({ items: [] }));
           setSavedImports(d.items || []);
         } catch (err:any) {
           setImportError(err?.message || "Import mislukt");
@@ -2829,7 +2830,7 @@ function PLECalculator() {
                   // Wis eerst alle oude model state
                   clearImportData();
 
-                  const res = await fetch(`/api/dhstress/imports?id=${it.id}`);
+                  const res = { ok: true, json: async () => await (window as any).electronAPI?.importsGet?.(it.id) || null } as any;
                   const blob = await res.blob();
                   const file = new File([blob], it.filename, { type: blob.type });
                   const parsed = await parsePLEFile(file);
@@ -2980,7 +2981,7 @@ function PLECalculator() {
                 padding: "4px 10px", background: "rgba(59,130,246,0.08)", border: `1px solid rgba(59,130,246,0.2)`,
                 borderRadius: 4, color: css.accent, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: css.mono,
               }}>Heropen</button>
-              <a href={`/api/dhstress/imports?id=${it.id}`} target="_blank" rel="noreferrer" style={{
+              <button onClick={async () => { const d = await (window as any).electronAPI?.importsGet?.(it.id); if (d?.data) { const blob = new Blob([Uint8Array.from(atob(d.data), c => c.charCodeAt(0))]); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = d.name || "import.xlsx"; a.click(); URL.revokeObjectURL(url); }}} style={{
                 padding: "4px 10px", background: "rgba(59,130,246,0.08)", border: `1px solid rgba(59,130,246,0.2)`,
                 borderRadius: 4, color: css.accent, fontSize: 11, fontWeight: 600, textDecoration: "none", fontFamily: css.mono,
                 display: "inline-flex", alignItems: "center",
@@ -2989,8 +2990,8 @@ function PLECalculator() {
                 if (!confirm("Verwijderen?")) return;
                 // Als dit het actieve bestand is, wis de model state
                 if (importFileName === it.filename) clearImportData();
-                await fetch(`/api/dhstress/imports?id=${it.id}`, { method: "DELETE" });
-                const d=await fetch('/api/dhstress/imports').then(r=>r.json());
+                await (window as any).electronAPI?.importsDelete?.(it.id);
+                const d=await ((window as any).electronAPI?.importsList?.() || Promise.resolve({ items: [] }));
                 setSavedImports(d.items||[]);
               }} style={{
                 padding: "4px 10px", background: "rgba(239,68,68,0.08)", border: `1px solid rgba(239,68,68,0.2)`,

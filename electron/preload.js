@@ -11,4 +11,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     clipboard.writeImage(img);
   },
   exportLicenseFile: (payload) => ipcRenderer.invoke('export-license-file', payload),
+  importsList: () => ipcRenderer.invoke('imports-list'),
+  importsSave: (payload) => ipcRenderer.invoke('imports-save', payload),
+  importsGet: (id) => ipcRenderer.invoke('imports-get', { id }),
+  importsDelete: (id) => ipcRenderer.invoke('imports-delete', { id }),
 });
