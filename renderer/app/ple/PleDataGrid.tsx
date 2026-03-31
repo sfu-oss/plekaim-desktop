@@ -21,6 +21,7 @@ export interface PleColumnDef {
   unit?: string;
   type: "text" | "number" | "select" | "boolean";
   options?: string[];
+  datalist?: string[];   // autocomplete suggesties (vrije invoer blijft mogelijk)
   min?: number;
   max?: number;
   required?: boolean;
@@ -304,22 +305,30 @@ export default function PleDataGrid({
                             ))}
                           </select>
                         ) : (
-                          <input
-                            ref={inputRef}
-                            type={col.type === "number" ? "text" : "text"}
-                            value={editValue}
-                            onChange={e => setEditValue(e.target.value)}
-                            onBlur={commitEdit}
-                            onKeyDown={handleKeyDown}
-                            style={{
-                              width: "100%", padding: pad,
-                              background: "#1e293b", color: "#e2e8f0",
-                              border: "1px solid #3b82f6", borderRadius: 0,
-                              fontSize: sz, fontFamily: F, outline: "none",
-                              textAlign: col.type === "number" ? "right" : "left",
-                              boxSizing: "border-box",
-                            }}
-                          />
+                          <>
+                            {col.datalist && (
+                              <datalist id={`dl-${col.key}`}>
+                                {col.datalist.map(o => <option key={o} value={o} />)}
+                              </datalist>
+                            )}
+                            <input
+                              ref={inputRef}
+                              type={col.type === "number" ? "text" : "text"}
+                              list={col.datalist ? `dl-${col.key}` : undefined}
+                              value={editValue}
+                              onChange={e => setEditValue(e.target.value)}
+                              onBlur={commitEdit}
+                              onKeyDown={handleKeyDown}
+                              style={{
+                                width: "100%", padding: pad,
+                                background: "#1e293b", color: "#e2e8f0",
+                                border: "1px solid #3b82f6", borderRadius: 0,
+                                fontSize: sz, fontFamily: F, outline: "none",
+                                textAlign: col.type === "number" ? "right" : "left",
+                                boxSizing: "border-box",
+                              }}
+                            />
+                          </>
                         )
                       ) : (
                         formatCell(val, col)

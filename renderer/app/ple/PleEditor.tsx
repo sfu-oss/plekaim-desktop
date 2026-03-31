@@ -9,6 +9,7 @@ import type {
   PleLoadCase, PleSubside, PleAdident, PleSupang,
 } from "../../lib/ple-model";
 import { updateModelTable } from "../../lib/ple-model";
+import { MATERIAL_REFS, findMaterial } from "../../lib/ple-materials";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    PLE Editor v2 — Bewerkbare tabellen die PleModel direct muteren
@@ -55,13 +56,13 @@ const WALL_COLS: PleColumnDef[] = [
 
 const MATL_COLS: PleColumnDef[] = [
   { key: "ident", label: "Ident", type: "text", width: 90, required: true },
-  { key: "matRef", label: "Materiaal", type: "text", width: 100 },
+  { key: "matRef", label: "Materiaal", type: "text", width: 120, datalist: MATERIAL_REFS },
   { key: "fabmet", label: "Fabricage", type: "select", options: ["none", "seam-welded", "seamless"], width: 100 },
   { key: "matfact", label: "MATFACT", type: "number", width: 70, decimals: 2 },
 ];
 
 const ISTROP_COLS: PleColumnDef[] = [
-  { key: "matRef", label: "Materiaal", type: "text", width: 100, required: true },
+  { key: "matRef", label: "Materiaal", type: "text", width: 120, required: true, datalist: MATERIAL_REFS },
   { key: "E", label: "E-mod", unit: "MPa", type: "number", width: 80 },
   { key: "nu", label: "ν", type: "number", width: 60, decimals: 2 },
   { key: "alpha", label: "α", unit: "1/°C", type: "number", width: 80, decimals: 7 },
@@ -287,10 +288,26 @@ export default function PleEditor({ model, onModelChange, onDataChanged, rawShee
           />
           <PleDataGrid
             title="ISTROP — Materiaal eigenschappen"
-            subtitle="E-modulus, Poisson, thermische coëfficiënt, SMYS"
+            subtitle="E-modulus, Poisson, thermische coëfficiënt, SMYS — typ een materiaalcode voor autocomplete"
             columns={ISTROP_COLS}
             data={model.materialProps as any[]}
-            onChange={d => setTable("materialProps", d as PleIstrop[])}
+            onChange={d => {
+              // Auto-fill eigenschappen als matRef overeenkomt met bekende database entry
+              const filled = (d as PleIstrop[]).map(row => {
+                const db = findMaterial(row.matRef);
+                if (!db) return row;
+                return {
+                  ...row,
+                  E:      row.E      || db.E,
+                  nu:     row.nu     || db.nu,
+                  alpha:  row.alpha  || db.alpha,
+                  Re:     row.Re     || db.Re,
+                  ReT:    row.ReT    || db.ReT,
+                  weight: row.weight || db.weight,
+                };
+              });
+              setTable("materialProps", filled as PleIstrop[]);
+            }}
           />
         </>
       )}

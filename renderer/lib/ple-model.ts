@@ -15,6 +15,7 @@
 // in-memory database, niet de database zelf.
 
 import type { FemNode, FemElement, MatProps, LoadCase, BoundaryCondition, FemSolverInput } from "./ple-fem";
+import { getMaterialProps } from "./ple-materials";
 
 // ============================================================
 // Data types — één per PLE4Win sheet
@@ -460,16 +461,20 @@ export function parseSheetsToModel(sheets: Record<string, any[][]>): PleModel {
     matfact: toNum(m.MATFACT) || 1,
   }));
 
-  // ISTROP
-  const materialProps: PleIstrop[] = sheetToObjects(sheets.ISTROP || []).map(m => ({
-    matRef: normalizeId(m.MATREF),
-    E: toNum(m.Emod) || 207000,
-    nu: toNum(m.Nu) || 0.3,
-    alpha: toNum(m.ALPHA) || 12e-6,
-    Re: toNum(m.Re) || 235,
-    ReT: toNum(m.ReT) || 0,
-    weight: toNum(m.WEIGHT) || 0,
-  }));
+  // ISTROP — parse uit Excel, vul ontbrekende waarden aan uit predefined materialen database
+  const materialProps: PleIstrop[] = sheetToObjects(sheets.ISTROP || []).map(m => {
+    const ref = normalizeId(m.MATREF);
+    const db = getMaterialProps(ref); // fallback uit ple-materials.ts
+    return {
+      matRef: ref,
+      E:      toNum(m.Emod)   || db.E,
+      nu:     toNum(m.Nu)     || db.nu,
+      alpha:  toNum(m.ALPHA)  || db.alpha,
+      Re:     toNum(m.Re)     || db.Re,
+      ReT:    toNum(m.ReT)    || db.ReT,
+      weight: toNum(m.WEIGHT) || db.weight,
+    };
+  });
 
   // ENDPTS
   const endpts: PleEndpt[] = sheetToObjects(sheets.ENDPTS || []).map(e => ({
