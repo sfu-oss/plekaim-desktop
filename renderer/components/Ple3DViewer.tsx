@@ -38,6 +38,12 @@ type FemNodeResult = {
   sb: number; Fx: number; My: number; Mz: number;
   ux: number; uy: number; uz: number;
 };
+type SoilWizardData = {
+  nodeId: string; nodeIndex: number;
+  KLH: number; KLS: number; KLT: number;
+  RVS: number; RVT: number; RH: number;
+  F: number; UF: number; sigmaK: number; H_cover: number;
+};
 type Props = {
   D: number; t: number; matName: string; Pi: number; dT: number;
   sh: number; vm: number; unity: number;
@@ -48,8 +54,9 @@ type Props = {
   tees?: Record<string, any>;
   SMYS?: number;
   femResults?: FemNodeResult[];
-  coverMap?: Record<string, number>;  // G-LEVEL per node ident (mm boven buis-as)
-  waterMap?: Record<string, number>;  // W-LEVEL per node ident (mm, kan negatief zijn)
+  coverMap?: Record<string, number>;
+  waterMap?: Record<string, number>;
+  soilWizardResults?: SoilWizardData[];
 };
 
 function useIsMobile() {
@@ -110,7 +117,7 @@ function Chk({ checked, onChange, label, color }: { checked: boolean; onChange: 
 export default function Ple3DViewer({
   D, t, matName, Pi, dT, sh, vm, unity,
   nodes, elements, endpoints, connects, supports, tees, SMYS = 235,
-  femResults, coverMap, waterMap,
+  femResults, coverMap, waterMap, soilWizardResults,
 }: Props) {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -151,6 +158,7 @@ export default function Ple3DViewer({
   const [showConnections, setShowConnections] = useState(true);
   const [showElasticElements, setShowElasticElements] = useState(false);
   const [showCasing, setShowCasing] = useState(false);
+  const [showSoilZones, setShowSoilZones] = useState(false);
 
   // ── State: element info ──
   const [selectedInfo, setSelectedInfo] = useState<any>(null);
@@ -162,6 +170,20 @@ export default function Ple3DViewer({
   const teeIdSet = useMemo(() => new Set(connects?.map(c => c.id1) || []), [connects]);
   const endpointIdSet = useMemo(() => new Set(Object.keys(endpoints || {})), [endpoints]);
   const supportIdSet = useMemo(() => new Set(supports?.map((s: any) => s.refIdent || s.id) || []), [supports]);
+
+  // Soil Wizard: per-node lookup + min/max voor kleurschaal
+  const soilWizMap = useMemo(() => {
+    const m = new Map<string, SoilWizardData>();
+    if (!soilWizardResults?.length) return { map: m, minKLH: 0, maxKLH: 1 };
+    let minK = Infinity, maxK = -Infinity;
+    for (const r of soilWizardResults) {
+      m.set(r.nodeId, r);
+      if (r.KLH < minK) minK = r.KLH;
+      if (r.KLH > maxK) maxK = r.KLH;
+    }
+    if (minK === maxK) { minK = 0; maxK = Math.max(maxK, 1); }
+    return { map: m, minKLH: minK, maxKLH: maxK };
+  }, [soilWizardResults]);
 
   // Result data labels
   const resultLabels: Record<string, string> = {
@@ -706,6 +728,78 @@ export default function Ple3DViewer({
         });
       }
 
+      // ── Soil Wizard zones (per-segment gekleurde grondband) ──
+      // Toont de horizontale grondveerstijfheid (KLH) als kleurgecodeerde band
+      // onder de pipeline, op de G-LEVEL hoogte
+      if (showSoilZones && soilWizardResults?.length && nodes.length > 2) {
+        const { map: swMap, minKLH, maxKLH } = soilWizMap;
+        // Kleurpalet: zacht (lage stijfheid) → stevig (hoge stijfheid)
+        // Veen/klei (laag) = warm bruin → Zand = goud → Grind (hoog) = koel grijs-blauw
+        const soilColor = (klh: number): number => {
+          const t = Math.max(0, Math.min(1, (klh - minKLH) / (maxKLH - minKLH || 1)));
+          // bruin(0) → oker(0.3) → goud(0.5) → olijf(0.7) → steenblauw(1.0)
+          const colors = [
+            { t: 0.0, r: 139, g: 90, b: 43 },   // bruin (veen/zachte klei)
+            { t: 0.3, r: 180, g: 140, b: 60 },   // oker
+            { t: 0.5, r: 210, g: 180, b: 60 },   // goud (zand)
+            { t: 0.7, r: 160, g: 170, b: 100 },  // olijf
+            { t: 1.0, r: 120, g: 140, b: 160 },  // steenblauw (grind)
+          ];
+          for (let i = 0; i < colors.length - 1; i++) {
+            if (t <= colors[i + 1].t) {
+              const f = (t - colors[i].t) / (colors[i + 1].t - colors[i].t);
+              const r = Math.round(colors[i].r + (colors[i + 1].r - colors[i].r) * f);
+              const g = Math.round(colors[i].g + (colors[i + 1].g - colors[i].g) * f);
+              const b = Math.round(colors[i].b + (colors[i + 1].b - colors[i].b) * f);
+              return (r << 16) | (g << 8) | b;
+            }
+          }
+          return 0x788c9c;
+        };
+
+        useEls.forEach((elm) => {
+          const n1 = nodes[elm.n1]; const n2 = nodes[elm.n2];
+          if (!n1 || !n2) return;
+          const sw1 = swMap.get(n1.id || ""); const sw2 = swMap.get(n2.id || "");
+          if (!sw1 && !sw2) return;
+          const klh = ((sw1?.KLH || 0) + (sw2?.KLH || 0)) / (sw1 && sw2 ? 2 : 1);
+          const p1 = getNodePos(n1); const p2 = getNodePos(n2);
+          // Band op G-LEVEL hoogte, breedte = DPE scaled
+          const cover1 = (coverMap?.[n1.id || ""] ?? (sw1?.H_cover || 500)) / 1000;
+          const cover2 = (coverMap?.[n2.id || ""] ?? (sw2?.H_cover || 500)) / 1000;
+          const elDiam = elm.d || elm.dpe || D;
+          const bandW = (elDiam / 1000) * scale * 0.8; // breedte van de band
+
+          // Bereken richting loodrecht op het element (horizontaal vlak)
+          const dir = new THREE.Vector3().subVectors(p2, p1).normalize();
+          const up = new THREE.Vector3(0, 1, 0);
+          const perp = new THREE.Vector3().crossVectors(dir, up).normalize().multiplyScalar(bandW / 2);
+
+          // Vier hoekpunten van de band (op G-LEVEL hoogte)
+          const g1 = new THREE.Vector3(p1.x, cover1, p1.z);
+          const g2 = new THREE.Vector3(p2.x, cover2, p2.z);
+          const v1a = g1.clone().add(perp);
+          const v1b = g1.clone().sub(perp);
+          const v2a = g2.clone().add(perp);
+          const v2b = g2.clone().sub(perp);
+
+          const verts = new Float32Array([
+            v1a.x, v1a.y, v1a.z, v2a.x, v2a.y, v2a.z, v1b.x, v1b.y, v1b.z,
+            v2a.x, v2a.y, v2a.z, v2b.x, v2b.y, v2b.z, v1b.x, v1b.y, v1b.z,
+          ]);
+          const geo = new THREE.BufferGeometry();
+          geo.setAttribute("position", new THREE.BufferAttribute(verts, 3));
+          geo.computeVertexNormals();
+          const col = soilColor(klh);
+          pg.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+            color: col, transparent: true, opacity: 0.55, side: THREE.DoubleSide,
+          })));
+          // Rand-lijn
+          const edgeGeo = new THREE.BufferGeometry().setFromPoints([v1a, v2a, v2b, v1b, v1a]);
+          pg.add(new THREE.Line(edgeGeo, new THREE.LineBasicMaterial({ color: col, transparent: true, opacity: 0.8 })));
+        });
+      }
+
       // ── Elastic Elements (highlight bochten met hoge R/D) ──
       if (showElasticElements) {
         useEls.forEach((elm) => {
@@ -780,8 +874,8 @@ export default function Ple3DViewer({
     pg.add(new THREE.GridHelper(200, 100, 0x8899aa, 0xaabbcc));
   }, [nodes, elements, D, t, pipeScale, colorMode, resultData, showCasing, hideOuter, showDisplaced, deformScale,
       showConstraints, showConnections, showIdents, showNodeNums, showElemNums, showBendIndicators,
-      showGroundLevel, showWaterLevel, showPolygonPts, showElasticElements,
-      unity, teeIdSet, endpointIdSet, supportIdSet, endpoints, femResults, histMin, histMax, getNodeValue, coverMap, waterMap]);
+      showGroundLevel, showWaterLevel, showPolygonPts, showElasticElements, showSoilZones,
+      unity, teeIdSet, endpointIdSet, supportIdSet, endpoints, femResults, histMin, histMax, getNodeValue, coverMap, waterMap, soilWizardResults, soilWizMap]);
 
   // ── View presets ──
   const setView = (v: string) => {
@@ -874,6 +968,20 @@ export default function Ple3DViewer({
             {selectedInfo.d && <div style={{ color: textMuted }}>Diameter: <span style={{ color: textBright }}>{selectedInfo.d} mm</span></div>}
             {selectedInfo.R > 0 && <div style={{ color: textMuted }}>Bend radius: <span style={{ color: textBright }}>{selectedInfo.R} mm</span></div>}
             {selectedInfo.uc !== undefined && <div style={{ color: textMuted }}>UC: <span style={{ color: selectedInfo.uc > 1 ? "#ef4444" : selectedInfo.uc > 0.85 ? "#eab308" : "#22c55e", fontWeight: 600 }}>{selectedInfo.uc.toFixed(3)}</span></div>}
+            {soilWizardResults && soilWizardResults.length > 0 && (() => {
+              const sw = soilWizMap.map.get(selectedInfo.id1 || "") || soilWizMap.map.get(selectedInfo.id2 || "");
+              if (!sw) return null;
+              return (
+                <div style={{ marginTop: 4, paddingTop: 4, borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+                  <div style={{ color: "#d4a44a", fontSize: 9, fontWeight: 600, marginBottom: 2 }}>Soil Wizard</div>
+                  <div style={{ color: textMuted }}>KLH: <span style={{ color: textBright }}>{sw.KLH.toFixed(0)} kN/m²</span></div>
+                  <div style={{ color: textMuted }}>KLS: <span style={{ color: textBright }}>{sw.KLS.toFixed(0)} kN/m²</span> KLT: <span style={{ color: textBright }}>{sw.KLT.toFixed(0)} kN/m²</span></div>
+                  <div style={{ color: textMuted }}>RH: <span style={{ color: textBright }}>{sw.RH.toFixed(1)} kN/m</span></div>
+                  <div style={{ color: textMuted }}>RVS: <span style={{ color: textBright }}>{sw.RVS.toFixed(1)}</span> RVT: <span style={{ color: textBright }}>{sw.RVT.toFixed(1)} kN/m</span></div>
+                  <div style={{ color: textMuted }}>Dekking: <span style={{ color: textBright }}>{sw.H_cover.toFixed(0)} mm</span></div>
+                </div>
+              );
+            })()}
           </div>
         )}
 
@@ -933,6 +1041,21 @@ export default function Ple3DViewer({
           <div style={{ height: 4 }} />
           <Chk checked={showGroundLevel} onChange={setShowGroundLevel} label="Ground Level" />
           <Chk checked={showWaterLevel} onChange={setShowWaterLevel} label="Water Level" />
+          {soilWizardResults && soilWizardResults.length > 0 && (
+            <Chk checked={showSoilZones} onChange={setShowSoilZones} label="Soil Zones (KLH)" color="#d4a44a" />
+          )}
+          {showSoilZones && soilWizardResults && soilWizardResults.length > 0 && (
+            <div style={{ marginLeft: 18, marginTop: 2, marginBottom: 2 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 8 }}>
+                <div style={{ width: 80, height: 8, borderRadius: 2, background: "linear-gradient(to right, #8b5a2b, #b48c3c, #d2b43c, #a0aa64, #788ca0)", border: "1px solid rgba(255,255,255,0.1)" }} />
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", width: 80, fontSize: 7, color: textDim, marginTop: 1 }}>
+                <span>{soilWizMap.minKLH.toFixed(0)}</span>
+                <span style={{ color: textMuted }}>kN/m²</span>
+                <span>{soilWizMap.maxKLH.toFixed(0)}</span>
+              </div>
+            </div>
+          )}
           <Chk checked={showPolygonPts} onChange={setShowPolygonPts} label="Polygon Points" />
           <Chk checked={showBendIndicators} onChange={setShowBendIndicators} label="Bend Indicators" />
           <Chk checked={showIdents} onChange={setShowIdents} label="Idents" />

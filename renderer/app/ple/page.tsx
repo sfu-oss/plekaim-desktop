@@ -1324,6 +1324,216 @@ function PLECalculator() {
     try { localStorage.removeItem("ple_import"); } catch {}
   };
 
+  /**
+   * Centrale FEM analyse runner — consolideert Import, Heropen en Herberekenen.
+   * Bouwt BCs, soilSprings, teeSpecs, perElementMaterials, supportBCs
+   * en draait solveFEM / solveAllLoadCases met consistente opties.
+   *
+   * Retourneert de meta-velden die de caller kan mergen.
+   */
+  const runFEMAnalysis = async (
+    parsed: { nodes: any[]; elements: any[]; meta: any },
+    wizardOverride?: SoilWizardResult[],
+  ) => {
+    const { solveFEM, solveAllLoadCases } = await import("@/lib/ple-fem");
+    const mat = parsed.meta.matProps || {
+      E: 207000, poisson: 0.3, alpha: 12e-6, SMYS: 235, density: 7850,
+    };
+    const PiVal = parsed.meta.Pi || 2.5;
+    const ToperVal = parsed.meta.Top || 100;
+    const TinstallVal = parsed.meta.Tinst || 10;
+    const lcList = parsed.meta.loadCases || [
+      { lc: 1, gloadF: 1, pressF: 1, tDifF: 1, deadwF: 1, setlF: 1 },
+    ];
+    const subsideMapVal = parsed.meta.subsideMap || {};
+
+    // --- femNodes met D, t, DPE ---
+    const femNodes = parsed.nodes.map((n: any, i: number) => {
+      const el = parsed.elements[i] || parsed.elements[i - 1] || {};
+      return { ...n, D: el.d || 139.7, t: el.t || 3.6, DPE: n.DPE || el.dc || 225 };
+    });
+
+    // --- Boundary conditions uit ENDPTS + ELSPRS ---
+    const bcs: any[] = [];
+    const endptsMap = parsed.meta.endptsMap || {};
+    const elsprsMap = parsed.meta.elsprsMap || {};
+    Object.entries(endptsMap).forEach(([id, ep]: any) => {
+      const cond = (ep.cond || "fixed").toLowerCase();
+      if (cond === "fixed" || cond === "anchor") bcs.push({ nodeId: id, type: "fixed" });
+      else if (cond === "free" || cond === "open") bcs.push({ nodeId: id, type: "free" });
+      else if (cond === "guided") bcs.push({ nodeId: id, type: "guided" });
+      else if (cond === "infin" || cond === "infinite") bcs.push({ nodeId: id, type: "infin" as any });
+      else if (cond === "spring" || cond === "elastic") {
+        const spr = Object.values(elsprsMap).find((s: any) => s) as any;
+        bcs.push({
+          nodeId: id, type: "spring",
+          kx: spr?.kx || 1e6, ky: spr?.ky || 1e6, kz: spr?.kz || 1e6,
+          krx: spr?.kphi || 0, kry: 0, krz: 0,
+        });
+      }
+    });
+    if (bcs.length === 0 && parsed.nodes.length >= 2) {
+      bcs.push({ nodeId: parsed.nodes[0]?.id || "N0", type: "infin" as any });
+      bcs.push({ nodeId: parsed.nodes[parsed.nodes.length - 1]?.id || `N${parsed.nodes.length - 1}`, type: "infin" as any });
+    }
+
+    // --- Grondveren: wizard > import > fallback ---
+    let soilSpringsArr: any[] = [];
+    const swResults = wizardOverride || parsed.meta.soilWizardResults || soilWizardResults || [];
+    if (swResults.length > 0) {
+      soilSpringsArr = wizardResultsToSoilSprings(swResults);
+    } else {
+      const coverMap = parsed.meta.coverMap || {};
+      const globalCover = parsed.meta.cover || 500;
+      const soilKey = Object.keys(SOIL_TYPES)[0] as keyof typeof SOIL_TYPES;
+      const soilProps = SOIL_TYPES[soilName as keyof typeof SOIL_TYPES] || SOIL_TYPES[soilKey];
+      femNodes.forEach((node: any) => {
+        const cover = coverMap[node.id] || globalCover;
+        if (cover <= 0) return;
+        const kh = soilProps.k_h * 1e-6;
+        const kv_up = soilProps.k_v_up * 1e-6;
+        const kv_down = soilProps.k_v_down * 1e-6;
+        const D_pipe = node.D || 139.7;
+        const DPE = node.DPE || D_pipe * 1.6;
+        const cover_m = cover / 1000;
+        const DPE_m = DPE / 1000;
+        const Kp = 1 / Math.pow(Math.tan((Math.PI / 4) - (soilProps.phi * Math.PI / 360)), 2);
+        const passivePressure = soilProps.gamma * cover_m * Kp;
+        soilSpringsArr.push({
+          nodeId: node.id, kh, kv_up, kv_down,
+          kAxial: kh * 0.5,
+          rMaxSide: passivePressure * DPE_m,
+          rMaxDown: soilProps.gamma * (cover_m + DPE_m / 2) * DPE_m * 3,
+          rMaxUp: soilProps.gamma * cover_m * DPE_m,
+          rMaxAxial: passivePressure * DPE_m * 0.7,
+        });
+      });
+    }
+
+    // --- Per-element materiaal uit ISTROP ---
+    const perElementMaterials = new Map<number, any>();
+    const istropMap = parsed.meta.istropMap || {};
+    if (Object.keys(istropMap).length > 0) {
+      parsed.elements.forEach((el: any, ei: number) => {
+        for (const [, matData] of Object.entries(istropMap)) {
+          if (matData) { perElementMaterials.set(ei, matData as any); break; }
+        }
+      });
+    }
+
+    // --- Steunpunten uit SUPPORT + ELSPRS ---
+    const supportBCs: any[] = [];
+    (parsed.meta.supportList || []).forEach((sup: any) => {
+      const springData = elsprsMap[sup.supRef || ""] || {};
+      const nodeId = sup.refIdent || "";
+      if (!nodeId) return;
+      if (springData.kx || springData.ky || springData.kz) {
+        supportBCs.push({
+          nodeId, type: "spring",
+          kx: springData.kx || 0, ky: springData.ky || 0, kz: springData.kz || 0,
+          krx: springData.kphi || 0,
+        });
+      } else {
+        supportBCs.push({ nodeId, type: "spring", kx: 0, ky: 0, kz: 1e8 });
+      }
+    });
+
+    // --- T-stuk SIF data ---
+    const teeSpecs: Record<string, any> = {};
+    const teeNodeMap: Record<string, string> = {};
+    if (parsed.meta.teeSpecData) {
+      Object.entries(parsed.meta.teeSpecData).forEach(([ref, spec]: any) => {
+        teeSpecs[ref] = {
+          type: spec.TYPE || spec.type || "Welded",
+          dRun: parseFloat(spec["D-RUN"]) || 273, tRun: parseFloat(spec["T-RUN"]) || 8,
+          dBrn: parseFloat(spec["D-BRN"]) || 219, tBrn: parseFloat(spec["T-BRN"]) || 6.3,
+          te: parseFloat(spec.TE) || 0, r0: parseFloat(spec.R0) || 50,
+        };
+      });
+    }
+    if (parsed.meta.connects) {
+      parsed.meta.connects.forEach((c: any) => {
+        if (c.teeRef) { teeNodeMap[c.id1] = c.teeRef; teeNodeMap[c.id2] = c.teeRef; }
+      });
+    }
+
+    // --- Bepaal of niet-lineaire analyse nodig is ---
+    const hasSignificantLoad = lcList.some((lc: any) => (lc.pressF || 0) > 0 || (lc.tDifF || 0) > 0);
+
+    // --- Draai solver ---
+    const bcsArg = bcs.length > 0 ? bcs : undefined;
+    const soilArg = soilSpringsArr.length > 0 ? soilSpringsArr : undefined;
+    const teeSpecsArg = Object.keys(teeSpecs).length > 0 ? teeSpecs : undefined;
+    const teeNodeMapArg = Object.keys(teeNodeMap).length > 0 ? teeNodeMap : undefined;
+
+    let femMeta: any = {};
+
+    if (lcList.length > 1) {
+      const result = solveAllLoadCases(
+        femNodes, parsed.elements, mat, PiVal, ToperVal, TinstallVal,
+        lcList, subsideMapVal, bcsArg, soilArg,
+        undefined, undefined, // designFactor, gammaM
+        teeSpecsArg, teeNodeMapArg,
+      );
+      setFemResults(result.envelope);
+      setFemAllLC(result.perLC.map((r: any, i: number) => ({
+        lc: lcList[i]?.lc || i + 1, results: r.nodeResults,
+      })));
+      const worstLCIdx = result.perLC.reduce((best: number, lc: any, i: number) => {
+        const maxUC = Math.max(...(lc.nodeResults || []).map((r: any) => r.uc || 0));
+        const bestUC = Math.max(...(result.perLC[best]?.nodeResults || []).map((r: any) => r.uc || 0));
+        return maxUC > bestUC ? i : best;
+      }, 0);
+      femMeta = {
+        _femPerLC: result.perLC,
+        _femEnvelope: result.envelope,
+        _femConverged: result.perLC.every((r: any) => r.converged !== false),
+        _soilIterations: result.perLC[0]?.soilIterations,
+        _soilConverged: result.perLC[0]?.soilConverged,
+        _plasticNodeCount: result.perLC[0]?.plasticNodeCount,
+        _geoIterations: result.perLC[0]?.geoIterations,
+        _geoConverged: result.perLC[0]?.geoConverged,
+        _femElementForces: result.perLC[worstLCIdx]?.elementForces,
+      };
+    } else {
+      const result = solveFEM({
+        nodes: femNodes, elements: parsed.elements, mat,
+        Pi_bar: PiVal, Toper: ToperVal, Tinstall: TinstallVal,
+        loadCase: lcList[0] || { lc: 1, gloadF: 1, pressF: 1, tDifF: 1, deadwF: 1, setlF: 1 },
+        subsideMap: subsideMapVal,
+        boundaryConditions: bcsArg,
+        soilSprings: soilArg,
+        perElementMaterials: perElementMaterials.size > 0 ? perElementMaterials : undefined,
+        supportSprings: supportBCs.length > 0 ? supportBCs : undefined,
+        geometricNonlinear: hasSignificantLoad,
+        materialNonlinear: hasSignificantLoad,
+        maxGeoIterations: parsed.meta.geomctl?.maxGeoIterations || 10,
+        geoConvergenceTol: parsed.meta.geomctl?.geoConvergenceTol || 0.001,
+        maxRotation: parsed.meta.geomctl?.maxRotation || 0.3,
+        maxSoilIterations: parsed.meta.soilctl?.maxSoilIterations || 20,
+        teeSpecs: teeSpecsArg,
+        teeNodeMap: teeNodeMapArg,
+      });
+      setFemResults(result.nodeResults);
+      setFemAllLC([{ lc: lcList[0]?.lc || 1, results: result.nodeResults }]);
+      femMeta = {
+        _femElementForces: result.elementForces,
+        _femConverged: result.converged,
+        _soilIterations: result.soilIterations,
+        _soilConverged: result.soilConverged,
+        _plasticNodeCount: result.plasticNodeCount,
+        _geoIterations: result.geoIterations,
+        _geoConverged: result.geoConverged,
+        _matIterations: result.matIterations,
+        _matConverged: result.matConverged,
+        _yieldedElements: result.yieldedElementCount,
+        _maxPlasticStrain: result.maxPlasticStrain,
+        _localBuckled: result.localBuckledCount,
+      };
+    }
+    return { femMeta, soilSprings: soilArg };
+  };
+
   // Sync PleModel → legacy state (importedNodes/importedEls/importedMeta)
   const syncModelToLegacy = (model: PleModel) => {
     const legacy = modelToLegacy(model);
@@ -1538,7 +1748,7 @@ function PLECalculator() {
         <Badge pass={n.vp} label="VM" unity={n.vu} compact={mobile} />
         <Badge pass={n.ok} label="Totaal" unity={n.cu} compact={mobile} />
       </div>
-      <Ple3DViewer D={D} t={t} matName={matName} Pi={Pi} dT={dT} sh={s.sh} vm={s.vm} unity={n.cu} nodes={importedNodes} elements={importedEls} endpoints={importedMeta?.endptsMap} connects={importedMeta?.connects || []} supports={importedMeta?.supportList || []} tees={importedMeta?.teeSpecData} SMYS={m.SMYS} femResults={femResults} coverMap={importedMeta?.coverMap} waterMap={importedMeta?.waterMap} />
+      <Ple3DViewer D={D} t={t} matName={matName} Pi={Pi} dT={dT} sh={s.sh} vm={s.vm} unity={n.cu} nodes={importedNodes} elements={importedEls} endpoints={importedMeta?.endptsMap} connects={importedMeta?.connects || []} supports={importedMeta?.supportList || []} tees={importedMeta?.teeSpecData} SMYS={m.SMYS} femResults={femResults} coverMap={importedMeta?.coverMap} waterMap={importedMeta?.waterMap} soilWizardResults={soilWizardResults} />
     </div>
   );
 
@@ -2637,244 +2847,10 @@ function PLECalculator() {
             }
           }
 
-          // FEM berekening uitvoeren (stijfheidsmatrix solver)
+          // FEM berekening uitvoeren via centrale helper
           try {
-            const { solveFEM, solveAllLoadCases } = await import("@/lib/ple-fem");
-            const mat = parsed.meta.matProps || {
-              E: 207000, poisson: 0.3, alpha: 12e-6, SMYS: 235, density: 7850
-            };
-            const PiVal = parsed.meta.Pi || 2.5;
-            const Toper = parsed.meta.Top || 100;
-            const Tinstall = parsed.meta.Tinst || 10;
-            const loadCases = parsed.meta.loadCases || [{ lc: 1, gloadF:1, pressF:1, tDifF:1, deadwF:1, setlF:1 }];
-            const subsideMap = parsed.meta.subsideMap || {};
-
-            const femNodes = parsed.nodes.map((n: any, i: number) => {
-              const el = parsed.elements[i] || parsed.elements[i-1] || {};
-              return { ...n, D: el.d || 139.7, t: el.t || 3.6, DPE: n.DPE || el.dc || 225 };
-            });
-
-            // Bouw boundary conditions uit ENDPTS + ELSPRS
-            const bcs: any[] = [];
-            const endptsMap = parsed.meta.endptsMap || {};
-            const elsprsMap = parsed.meta.elsprsMap || {};
-            Object.entries(endptsMap).forEach(([id, ep]: any) => {
-              const cond = (ep.cond || "fixed").toLowerCase();
-              if (cond === "fixed" || cond === "anchor") {
-                bcs.push({ nodeId: id, type: "fixed" });
-              } else if (cond === "free" || cond === "open") {
-                bcs.push({ nodeId: id, type: "free" });
-              } else if (cond === "guided") {
-                bcs.push({ nodeId: id, type: "guided" });
-              } else if (cond === "infin" || cond === "infinite") {
-                // INFIN: half-oneindige balk (Hetényi) — PLE4Win default
-                bcs.push({ nodeId: id, type: "infin" as any });
-              } else if (cond === "spring" || cond === "elastic") {
-                const spr = Object.values(elsprsMap).find((s: any) => s) as any;
-                bcs.push({
-                  nodeId: id, type: "spring",
-                  kx: spr?.kx || 1e6, ky: spr?.ky || 1e6, kz: spr?.kz || 1e6,
-                  krx: spr?.kphi || 0, kry: 0, krz: 0,
-                });
-              }
-            });
-            // Als er geen ENDPTS zijn: gebruik INFIN als default (ipv FIXED)
-            if (bcs.length === 0 && parsed.nodes.length >= 2) {
-              const firstId = parsed.nodes[0]?.id || "N0";
-              const lastId = parsed.nodes[parsed.nodes.length - 1]?.id || `N${parsed.nodes.length - 1}`;
-              bcs.push({ nodeId: firstId, type: "infin" as any });
-              bcs.push({ nodeId: lastId, type: "infin" as any });
-            }
-
-            // Bouw grondveren — gebruik Soil Wizard resultaten als beschikbaar
-            let soilSprings: any[] = [];
-            const importedSwResults = parsed.meta.soilWizardResults || [];
-            if (importedSwResults.length > 0) {
-              // GENSOIL data uit Excel import
-              soilSprings = wizardResultsToSoilSprings(importedSwResults);
-            } else if (soilWizardResults.length > 0) {
-              // Wizard resultaten uit eerdere berekening
-              soilSprings = wizardResultsToSoilSprings(soilWizardResults);
-            } else {
-            // Fallback: globale grondveren uit SOIL_TYPES + G-LEVEL coverMap
-            const coverMap = parsed.meta.coverMap || {};
-            const globalCover = parsed.meta.cover || 500; // mm
-            // Gebruik de geselecteerde grondsoort of default zand
-            const soilKey = Object.keys(SOIL_TYPES)[0] as keyof typeof SOIL_TYPES;
-            const soilProps = SOIL_TYPES[soilName as keyof typeof SOIL_TYPES] || SOIL_TYPES[soilKey];
-
-            femNodes.forEach((node: any) => {
-              const cover = coverMap[node.id] || globalCover; // mm dekking per node
-              if (cover <= 0) return;
-              // PLE4Win-stijl: grondveerstijfheid is ONAFHANKELIJK van dekking
-              // Dekking beïnvloedt alleen de maximale grondreactie (RH, RVT, RVS)
-              // Eenheden: soilProps.k_h in kN/m³, FEM in N/mm
-              // Conversie: 1 kN/m³ = 1e-6 N/mm³
-              const kh = soilProps.k_h * 1e-6;       // N/mm³
-              const kv_up = soilProps.k_v_up * 1e-6;  // N/mm³
-              const kv_down = soilProps.k_v_down * 1e-6; // N/mm³
-              // PLE4Win-stijl: max grondreactie (RH, RVT, RVS) per lengte-eenheid
-              // NEN 3650: RH = Kp × σk × D, RVT = γ × H × D, RVS = γ × (H + D/2) × D × Nγ
-              const D_pipe = node.D || 139.7;
-              const DPE = node.DPE || D_pipe * 1.6;
-              const cover_m = cover / 1000; // dekking in m
-              const DPE_m = DPE / 1000; // manteldiameter in m
-              const Kp = 1 / Math.pow(Math.tan((Math.PI/4) - (soilProps.phi * Math.PI / 360)), 2);
-              // σk = verticale korrelspanning op hart leiding
-              const sigmaK = soilProps.gamma * cover_m; // kN/m²
-              // RH = Kp × σk × D (kN/m)
-              const RH = Kp * sigmaK * DPE_m;
-              // RVS ≈ γ × (H + D/2) × D × 3 (neerwaarts, conservatief)
-              const RVS = soilProps.gamma * (cover_m + DPE_m / 2) * DPE_m * 3;
-              // RVT = γ × H × D (opwaarts = grondgewicht boven buis)
-              const RVT = soilProps.gamma * cover_m * DPE_m;
-              // Conversie kN/m → N/mm: 1 kN/m = 1 N/mm
-              // MAAR: solver verwacht rMax als totale kracht (N), niet per lengte
-              // Schat invloedslengte als gemiddelde elementlengte (~2000-5000 mm)
-              // Gebruik een conservatieve waarde zodat nodes niet te snel plastisch worden
-              const estInfluence = 3000; // mm (geschatte gemiddelde invloedslengte)
-              const rMaxSide = RH * estInfluence; // N (totale kracht per node)
-              const rMaxDown = RVS * estInfluence; // N
-              const rMaxUp = RVT * estInfluence; // N
-              soilSprings.push({
-                nodeId: node.id,
-                kh, kv_up, kv_down,
-                kAxial: kh * 0.5,
-              });
-            });
-            } // end else (fallback globale grondveren)
-
-            // Prioriteit 4: per-element materiaal uit ISTROP
-            const perElementMaterials = new Map<number, any>();
-            const istropMap = parsed.meta.istropMap || {};
-            if (Object.keys(istropMap).length > 0) {
-              // Koppel materiaal per element via MATL sheet data
-              parsed.elements.forEach((el: any, ei: number) => {
-                // Zoek materiaal voor de nodes van dit element
-                const n1Id = parsed.nodes[el.n1]?.id || "";
-                const n2Id = parsed.nodes[el.n2]?.id || "";
-                // Probeer MATL lookup (als er per-node materiaalverwijzingen zijn)
-                for (const [matRef, matData] of Object.entries(istropMap)) {
-                  if (matData) {
-                    perElementMaterials.set(ei, matData as any);
-                    break; // gebruik eerste beschikbare
-                  }
-                }
-              });
-            }
-
-            // Prioriteit 5: steunpunten uit SUPPORT + ELSPRS
-            const supportBCs: any[] = [];
-            const supportList = parsed.meta.supportList || [];
-            supportList.forEach((sup: any) => {
-              const supRef = sup.supRef || "";
-              const springData = elsprsMap[supRef] || {};
-              const nodeId = sup.refIdent || "";
-              if (!nodeId) return;
-              // Als er verenstijfheden zijn, maak een spring BC
-              if (springData.kx || springData.ky || springData.kz) {
-                supportBCs.push({
-                  nodeId, type: "spring",
-                  kx: springData.kx || 0,
-                  ky: springData.ky || 0,
-                  kz: springData.kz || 0,
-                  krx: springData.kphi || 0,
-                });
-              } else {
-                // Default: vast steunpunt in verticale richting
-                supportBCs.push({ nodeId, type: "spring", kx: 0, ky: 0, kz: 1e8 });
-              }
-            });
-
-            // Multi-loadcase analyse
-            // Bouw T-stuk SIF data voor de solver
-            const teeSpecs: Record<string, any> = {};
-            const teeNodeMap: Record<string, string> = {};
-            if (parsed.meta.teeSpecData) {
-              Object.entries(parsed.meta.teeSpecData).forEach(([ref, spec]: any) => {
-                teeSpecs[ref] = {
-                  type: spec.TYPE || spec.type || "Welded",
-                  dRun: parseFloat(spec["D-RUN"]) || 273,
-                  tRun: parseFloat(spec["T-RUN"]) || 8,
-                  dBrn: parseFloat(spec["D-BRN"]) || 219,
-                  tBrn: parseFloat(spec["T-BRN"]) || 6.3,
-                  te: parseFloat(spec.TE) || 0,
-                  r0: parseFloat(spec.R0) || 50,
-                };
-              });
-            }
-            if (parsed.meta.connects) {
-              parsed.meta.connects.forEach((c: any) => {
-                if (c.teeRef) {
-                  teeNodeMap[c.id1] = c.teeRef;
-                  teeNodeMap[c.id2] = c.teeRef;
-                }
-              });
-            }
-
-            if (loadCases.length > 1) {
-              const result = solveAllLoadCases(
-                femNodes, parsed.elements, mat, PiVal, Toper, Tinstall,
-                loadCases, subsideMap, bcs.length > 0 ? bcs : undefined,
-                soilSprings.length > 0 ? soilSprings : undefined,
-                undefined, undefined, // designFactor, gammaM
-                Object.keys(teeSpecs).length > 0 ? teeSpecs : undefined,
-                Object.keys(teeNodeMap).length > 0 ? teeNodeMap : undefined,
-              );
-              setFemResults(result.envelope);
-              setFemAllLC(result.perLC.map((r: any, i: number) => ({ lc: loadCases[i]?.lc || i + 1, results: r.nodeResults })));
-              parsed.meta._femPerLC = result.perLC;
-              parsed.meta._femEnvelope = result.envelope;
-              parsed.meta._femConverged = result.perLC.every((r: any) => r.converged !== false);
-              parsed.meta._soilIterations = result.perLC[0]?.soilIterations;
-              parsed.meta._soilConverged = result.perLC[0]?.soilConverged;
-              parsed.meta._plasticNodeCount = result.perLC[0]?.plasticNodeCount;
-              // Element forces van het maatgevende lastgeval
-              const worstLCIdx = result.perLC.reduce((best: number, lc: any, i: number) => {
-                const maxUC = Math.max(...(lc.nodeResults || []).map((r: any) => r.uc || 0));
-                const bestUC = Math.max(...(result.perLC[best]?.nodeResults || []).map((r: any) => r.uc || 0));
-                return maxUC > bestUC ? i : best;
-              }, 0);
-              parsed.meta._femElementForces = result.perLC[worstLCIdx]?.elementForces;
-            } else {
-                // Bepaal of niet-lineaire analyse nodig is
-                // Alleen bij significante belasting (druk of temperatuur)
-                const lc0 = loadCases[0] || {};
-                const hasSignificantLoad = (lc0.pressF || 0) > 0 || (lc0.tDifF || 0) > 0;
-
-                const result = solveFEM({
-                nodes: femNodes, elements: parsed.elements, mat,
-                Pi_bar: PiVal, Toper, Tinstall,
-                loadCase: loadCases[0] || { lc:1, gloadF:1, pressF:1, tDifF:1, deadwF:1, setlF:1 },
-                subsideMap,
-                boundaryConditions: bcs.length > 0 ? bcs : undefined,
-                soilSprings: soilSprings.length > 0 ? soilSprings : undefined,
-                perElementMaterials: perElementMaterials.size > 0 ? perElementMaterials : undefined,
-                supportSprings: supportBCs.length > 0 ? supportBCs : undefined,
-                geometricNonlinear: hasSignificantLoad,
-                materialNonlinear: hasSignificantLoad,
-                maxGeoIterations: parsed.meta.geomctl?.maxGeoIterations || 10,
-                geoConvergenceTol: parsed.meta.geomctl?.geoConvergenceTol || 0.001,
-                maxRotation: parsed.meta.geomctl?.maxRotation || 0.3,
-                maxSoilIterations: parsed.meta.soilctl?.maxSoilIterations || 20,
-                teeSpecs: Object.keys(teeSpecs).length > 0 ? teeSpecs : undefined,
-                teeNodeMap: Object.keys(teeNodeMap).length > 0 ? teeNodeMap : undefined,
-              });
-              setFemResults(result.nodeResults);
-              setFemAllLC([{ lc: loadCases[0]?.lc || 1, results: result.nodeResults }]);
-              parsed.meta._femElementForces = result.elementForces;
-              parsed.meta._femConverged = result.converged;
-              parsed.meta._soilIterations = result.soilIterations;
-              parsed.meta._soilConverged = result.soilConverged;
-              parsed.meta._plasticNodeCount = result.plasticNodeCount;
-              parsed.meta._geoIterations = result.geoIterations;
-              parsed.meta._geoConverged = result.geoConverged;
-              parsed.meta._matIterations = result.matIterations;
-              parsed.meta._matConverged = result.matConverged;
-              parsed.meta._yieldedElements = result.yieldedElementCount;
-              parsed.meta._maxPlasticStrain = result.maxPlasticStrain;
-              parsed.meta._localBuckled = result.localBuckledCount;
-            }
+            const { femMeta } = await runFEMAnalysis(parsed);
+            Object.assign(parsed.meta, femMeta);
           } catch (e) {
             console.error("FEM berekening mislukt:", e);
           }
@@ -2938,7 +2914,7 @@ function PLECalculator() {
           <div key={it.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 10px", borderBottom: `1px solid ${css.border}` }}>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.filename}</div>
-              <div style={{ fontSize: 10, color: css.dim }}>{new Date(it.date || it.createdAt || Date.now()).toLocaleString("nl-NL")}</div>
+              <div style={{ fontSize: 10, color: css.dim }}>{(() => { const d = new Date(it.date || it.createdAt || Date.now()); return isNaN(d.getTime()) ? "Onbekende datum" : d.toLocaleString("nl-NL"); })()}</div>
             </div>
             <div style={{ display: "flex", gap: 6, alignItems: "center", flexShrink: 0 }}>
               <button onClick={async ()=>{
@@ -2965,116 +2941,10 @@ function PLECalculator() {
                     setPleModel(model);
                   }
 
-                  // FEM berekening uitvoeren (stijfheidsmatrix solver)
+                  // FEM berekening uitvoeren via centrale helper
                   try {
-                    const { solveFEM, solveAllLoadCases } = await import("@/lib/ple-fem");
-                    const mat = parsed.meta.matProps || {
-                      E: 207000, poisson: 0.3, alpha: 12e-6, SMYS: 235, density: 7850
-                    };
-                    const PiVal = parsed.meta.Pi || 2.5;
-                    const Toper = parsed.meta.Top || 100;
-                    const Tinstall = parsed.meta.Tinst || 10;
-                    const loadCases = parsed.meta.loadCases || [{ lc: 1, gloadF:1, pressF:1, tDifF:1, deadwF:1, setlF:1 }];
-                    const subsideMap = parsed.meta.subsideMap || {};
-
-                    const femNodes = parsed.nodes.map((n: any, i: number) => {
-                      const el = parsed.elements[i] || parsed.elements[i-1] || {};
-                      return { ...n, D: el.d || 139.7, t: el.t || 3.6, DPE: n.DPE || el.dc || 225 };
-                    });
-
-                    // Bouw boundary conditions uit ENDPTS + ELSPRS
-                    const bcs: any[] = [];
-                    const endptsMap = parsed.meta.endptsMap || {};
-                    const elsprsMap = parsed.meta.elsprsMap || {};
-                    Object.entries(endptsMap).forEach(([id, ep]: any) => {
-                      const cond = (ep.cond || "fixed").toLowerCase();
-                      if (cond === "fixed" || cond === "anchor") {
-                        bcs.push({ nodeId: id, type: "fixed" });
-                      } else if (cond === "free" || cond === "open") {
-                        bcs.push({ nodeId: id, type: "free" });
-                      } else if (cond === "guided") {
-                        bcs.push({ nodeId: id, type: "guided" });
-                      } else if (cond === "infin" || cond === "infinite") {
-                        bcs.push({ nodeId: id, type: "infin" as any });
-                      } else if (cond === "spring" || cond === "elastic") {
-                        const spr = Object.values(elsprsMap).find((s: any) => s) as any;
-                        bcs.push({
-                          nodeId: id, type: "spring",
-                          kx: spr?.kx || 1e6, ky: spr?.ky || 1e6, kz: spr?.kz || 1e6,
-                          krx: spr?.kphi || 0, kry: 0, krz: 0,
-                        });
-                      }
-                    });
-                    if (bcs.length === 0 && parsed.nodes.length >= 2) {
-                      const firstId = parsed.nodes[0]?.id || "N0";
-                      const lastId = parsed.nodes[parsed.nodes.length - 1]?.id || `N${parsed.nodes.length - 1}`;
-                      bcs.push({ nodeId: firstId, type: "infin" as any });
-                      bcs.push({ nodeId: lastId, type: "infin" as any });
-                    }
-
-                    // Bouw grondveren — wizard override
-                    let soilSprings: any[] = [];
-                    const swRes2 = parsed.meta.soilWizardResults || soilWizardResults || [];
-                    if (swRes2.length > 0) {
-                      soilSprings = wizardResultsToSoilSprings(swRes2);
-                    } else {
-                    const coverMap = parsed.meta.coverMap || {};
-                    const globalCover = parsed.meta.cover || 500;
-                    const soilKey = Object.keys(SOIL_TYPES)[0] as keyof typeof SOIL_TYPES;
-                    const soilProps = SOIL_TYPES[soilName as keyof typeof SOIL_TYPES] || SOIL_TYPES[soilKey];
-                    femNodes.forEach((node: any) => {
-                      const cover = coverMap[node.id] || globalCover;
-                      if (cover <= 0) return;
-                      const hFactor = Math.max(cover / 1000, 0.3);
-                      const kh = (soilProps.k_h / 1000) * hFactor;
-                      const kv_up = (soilProps.k_v_up / 1000) * hFactor;
-                      const kv_down = (soilProps.k_v_down / 1000) * hFactor;
-                      const D_pipe = node.D || 139.7;
-                      const DPE = node.DPE || D_pipe * 1.6;
-                      const Kp = 1 / Math.pow(Math.tan((Math.PI/4) - (soilProps.phi * Math.PI / 360)), 2);
-                      const passivePressure = soilProps.gamma * (cover / 1000) * Kp;
-                      soilSprings.push({
-                        nodeId: node.id, kh, kv_up, kv_down,
-                        kAxial: kh * 0.5,
-                        rMaxSide: passivePressure * (DPE / 1000),
-                        rMaxDown: soilProps.gamma * (cover / 1000 + DPE / 2000) * (DPE / 1000) * 3,
-                        rMaxUp: soilProps.gamma * (cover / 1000) * (DPE / 1000),
-                        rMaxAxial: passivePressure * (DPE / 1000) * 0.7,
-                      });
-                    });
-                    } // end else fallback
-
-                    if (loadCases.length > 1) {
-                      const result = solveAllLoadCases(
-                        femNodes, parsed.elements, mat, PiVal, Toper, Tinstall,
-                        loadCases, subsideMap, bcs.length > 0 ? bcs : undefined,
-                        soilSprings.length > 0 ? soilSprings : undefined,
-                      );
-                      setFemResults(result.envelope);
-                      setFemAllLC(result.perLC.map((r: any, i: number) => ({ lc: loadCases[i]?.lc || i + 1, results: r.nodeResults })));
-                      parsed.meta._femPerLC = result.perLC;
-                      parsed.meta._femEnvelope = result.envelope;
-                      parsed.meta._femConverged = result.perLC.every((r: any) => r.converged !== false);
-                      parsed.meta._soilIterations = result.perLC[0]?.soilIterations;
-                      parsed.meta._soilConverged = result.perLC[0]?.soilConverged;
-                      parsed.meta._plasticNodeCount = result.perLC[0]?.plasticNodeCount;
-                    } else {
-                      const result = solveFEM({
-                        nodes: femNodes, elements: parsed.elements, mat,
-                        Pi_bar: PiVal, Toper, Tinstall,
-                        loadCase: loadCases[0] || { lc:1, gloadF:1, pressF:1, tDifF:1, deadwF:1, setlF:1 },
-                        subsideMap,
-                        boundaryConditions: bcs.length > 0 ? bcs : undefined,
-                        soilSprings: soilSprings.length > 0 ? soilSprings : undefined,
-                      });
-                      setFemResults(result.nodeResults);
-                      setFemAllLC([{ lc: loadCases[0]?.lc || 1, results: result.nodeResults }]);
-                      parsed.meta._femElementForces = result.elementForces;
-                      parsed.meta._femConverged = result.converged;
-                      parsed.meta._soilIterations = result.soilIterations;
-                      parsed.meta._soilConverged = result.soilConverged;
-                      parsed.meta._plasticNodeCount = result.plasticNodeCount;
-                    }
+                    const { femMeta } = await runFEMAnalysis(parsed);
+                    Object.assign(parsed.meta, femMeta);
                   } catch (e) {
                     console.error("FEM berekening mislukt:", e);
                   }
@@ -3146,123 +3016,10 @@ function PLECalculator() {
                 setImportedEls(legacyEls);
                 setImportedMeta((prev: any) => ({ ...prev, ...legacyMeta }));
 
-                const { solveFEM, solveAllLoadCases } = await import("@/lib/ple-fem");
-                const mat = legacyMeta.matProps || { E: 207000, poisson: 0.3, alpha: 12e-6, SMYS: 235, density: 7850 };
-                const PiVal = legacyMeta.Pi || 2.5;
-                const ToperVal = legacyMeta.Top || 100;
-                const TinstallVal = legacyMeta.Tinst || 10;
-                const lcList = legacyMeta.loadCases || [{ lc: 1, gloadF:1, pressF:1, tDifF:1, deadwF:1, setlF:1 }];
-                const subsideMapVal = legacyMeta.subsideMap || {};
-
-                const femNodes = legacyNodes.map((n: any, i: number) => {
-                  const el = legacyEls[i] || legacyEls[i-1] || {};
-                  return { ...n, D: el.d || 139.7, t: el.t || 3.6, DPE: n.DPE || el.dc || 225 };
-                });
-
-                const bcs: any[] = [];
-                const endptsMap = legacyMeta.endptsMap || {};
-                const elsprsMap = legacyMeta.elsprsMap || {};
-                Object.entries(endptsMap).forEach(([id, ep]: any) => {
-                  const cond = (ep.cond || "fixed").toLowerCase();
-                  if (cond === "fixed" || cond === "anchor") bcs.push({ nodeId: id, type: "fixed" });
-                  else if (cond === "free" || cond === "open") bcs.push({ nodeId: id, type: "free" });
-                  else if (cond === "guided") bcs.push({ nodeId: id, type: "guided" });
-                  else if (cond === "infin" || cond === "infinite") bcs.push({ nodeId: id, type: "infin" as any });
-                  else if (cond === "spring" || cond === "elastic") {
-                    const spr = Object.values(elsprsMap).find((s: any) => s) as any;
-                    bcs.push({ nodeId: id, type: "spring", kx: spr?.kx || 1e6, ky: spr?.ky || 1e6, kz: spr?.kz || 1e6, krx: spr?.kphi || 0, kry: 0, krz: 0 });
-                  }
-                });
-                if (bcs.length === 0 && legacyNodes.length >= 2) {
-                  bcs.push({ nodeId: legacyNodes[0]?.id || "N0", type: "infin" as any });
-                  bcs.push({ nodeId: legacyNodes[legacyNodes.length - 1]?.id || `N${legacyNodes.length - 1}`, type: "infin" as any });
-                }
-
-                let soilSprings: any[] = [];
-                const swRes3 = legacyMeta.soilWizardResults || soilWizardResults || [];
-                if (swRes3.length > 0) {
-                  soilSprings = wizardResultsToSoilSprings(swRes3);
-                } else {
-                const coverMap = legacyMeta.coverMap || {};
-                const globalCover = legacyMeta.cover || 500;
-                const soilKey = Object.keys(SOIL_TYPES)[0] as keyof typeof SOIL_TYPES;
-                const soilPropsVal = SOIL_TYPES[soilName as keyof typeof SOIL_TYPES] || SOIL_TYPES[soilKey];
-                femNodes.forEach((node: any) => {
-                  const cover = coverMap[node.id] || globalCover;
-                  if (cover <= 0) return;
-                  const kh = soilPropsVal.k_h * 1e-6;
-                  const kv_up = soilPropsVal.k_v_up * 1e-6;
-                  const kv_down = soilPropsVal.k_v_down * 1e-6;
-                  soilSprings.push({ nodeId: node.id, kh, kv_up, kv_down, kAxial: kh * 0.5 });
-                });
-                } // end else fallback
-
-                const teeSpecsR: Record<string, any> = {};
-                const teeNodeMapR: Record<string, string> = {};
-                if (legacyMeta.teeSpecData) {
-                  Object.entries(legacyMeta.teeSpecData).forEach(([ref, spec]: any) => {
-                    teeSpecsR[ref] = {
-                      type: spec.TYPE || spec.type || "Welded",
-                      dRun: parseFloat(spec["D-RUN"]) || 273, tRun: parseFloat(spec["T-RUN"]) || 8,
-                      dBrn: parseFloat(spec["D-BRN"]) || 219, tBrn: parseFloat(spec["T-BRN"]) || 6.3,
-                      te: parseFloat(spec.TE) || 0, r0: parseFloat(spec.R0) || 50,
-                    };
-                  });
-                }
-                if (legacyMeta.connects) {
-                  legacyMeta.connects.forEach((c: any) => {
-                    if (c.teeRef) { teeNodeMapR[c.id1] = c.teeRef; teeNodeMapR[c.id2] = c.teeRef; }
-                  });
-                }
-
-                const hasSignificantLoad = lcList.some((lc: any) => (lc.pressF || 0) > 0 || (lc.tDifF || 0) > 0);
-
-                if (lcList.length > 1) {
-                  const result = solveAllLoadCases(
-                    femNodes, legacyEls, mat, PiVal, ToperVal, TinstallVal,
-                    lcList, subsideMapVal,
-                    bcs.length > 0 ? bcs : undefined,
-                    soilSprings.length > 0 ? soilSprings : undefined,
-                    undefined, undefined,
-                    Object.keys(teeSpecsR).length > 0 ? teeSpecsR : undefined,
-                    Object.keys(teeNodeMapR).length > 0 ? teeNodeMapR : undefined,
-                  );
-                  setFemResults(result.envelope);
-                  setFemAllLC(result.perLC.map((r: any, i: number) => ({ lc: lcList[i]?.lc || i + 1, results: r.nodeResults })));
-                  setImportedMeta((prev: any) => ({
-                    ...prev,
-                    _femConverged: result.perLC.every((r: any) => r.converged !== false),
-                    _soilIterations: result.perLC[0]?.soilIterations,
-                    _soilConverged: result.perLC[0]?.soilConverged,
-                    _plasticNodeCount: result.perLC[0]?.plasticNodeCount,
-                    _geoIterations: result.perLC[0]?.geoIterations,
-                    _geoConverged: result.perLC[0]?.geoConverged,
-                  }));
-                } else {
-                  const result = solveFEM({
-                    nodes: femNodes, elements: legacyEls, mat,
-                    Pi_bar: PiVal, Toper: ToperVal, Tinstall: TinstallVal,
-                    loadCase: lcList[0] || { lc: 1, gloadF: 1, pressF: 1, tDifF: 1, deadwF: 1, setlF: 1 },
-                    subsideMap: subsideMapVal,
-                    boundaryConditions: bcs.length > 0 ? bcs : undefined,
-                    soilSprings: soilSprings.length > 0 ? soilSprings : undefined,
-                    geometricNonlinear: hasSignificantLoad,
-                    materialNonlinear: hasSignificantLoad,
-                    teeSpecs: Object.keys(teeSpecsR).length > 0 ? teeSpecsR : undefined,
-                    teeNodeMap: Object.keys(teeNodeMapR).length > 0 ? teeNodeMapR : undefined,
-                  });
-                  setFemResults(result.nodeResults);
-                  setFemAllLC([{ lc: lcList[0]?.lc || 1, results: result.nodeResults }]);
-                  setImportedMeta((prev: any) => ({
-                    ...prev,
-                    _femConverged: result.converged,
-                    _soilIterations: result.soilIterations,
-                    _soilConverged: result.soilConverged,
-                    _plasticNodeCount: result.plasticNodeCount,
-                    _geoIterations: result.geoIterations,
-                    _geoConverged: result.geoConverged,
-                  }));
-                }
+                // Draai FEM via centrale helper
+                const parsed = { nodes: legacyNodes, elements: legacyEls, meta: legacyMeta };
+                const { femMeta } = await runFEMAnalysis(parsed);
+                setImportedMeta((prev: any) => ({ ...prev, ...femMeta }));
               } catch (e) {
                 console.error("Herberekening mislukt:", e);
                 alert("Herberekening mislukt: " + (e as Error).message);

@@ -2689,6 +2689,9 @@ export function solveAllLoadCases(
 ): { perLC: FemSolverOutput[]; envelope: NodeResult[] } {
   const perLC: FemSolverOutput[] = [];
 
+  // Bepaal of niet-lineaire analyse nodig is (consistent met single-LC path)
+  const hasSignificantLoad = loadCases.some((lc: any) => (lc.pressF || 0) > 0 || (lc.tDifF || 0) > 0);
+
   for (const lc of loadCases) {
     const result = solveFEM({
       nodes, elements, mat,
@@ -2697,6 +2700,8 @@ export function solveAllLoadCases(
       boundaryConditions, soilSprings,
       designFactor, gammaM,
       teeSpecs, teeNodeMap,
+      geometricNonlinear: hasSignificantLoad,
+      materialNonlinear: hasSignificantLoad,
     });
     perLC.push(result);
   }
