@@ -15,9 +15,10 @@ if (!fs.existsSync(plePath)) {
 
 let html = fs.readFileSync(plePath, 'utf-8');
 
-// Replace ./_next/ with ../_next/ for correct resolution from ple/ subdirectory
-html = html.replace(/"\.\/_next\//g, '"../_next/');
-html = html.replace(/'\.\/_next\//g, "'../_next/");
+// Replace ALL occurrences of ./_next/ with ../_next/ (covers src=, href=, inline JS, etc.)
+const before = (html.match(/\.\/_next\//g) || []).length;
+html = html.replace(/\.\/_next\//g, '../_next/');
+const after = (html.match(/\.\/_next\//g) || []).length;
 
 fs.writeFileSync(plePath, html, 'utf-8');
-console.log('Fixed asset paths in ple/index.html');
+console.log(`Fixed asset paths in ple/index.html (${before} replacements, ${after} remaining)`);
