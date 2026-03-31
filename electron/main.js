@@ -197,6 +197,36 @@ async function promptLicenseKey() {
   });
 }
 
+
+// ─── Admin: License generation IPC ─────────────────────────
+const ADMIN_EMAILS = ['skuu@kaimple.com', 'desktop@kaimple.com', 'admin@kaimple.com'];
+const PRIVATE_KEY_PATH = path.join(__dirname, '..', 'license-tools', 'private.pem');
+
+ipcMain.handle('generate-license', async (event, payload) => {
+  // Check if private key exists (only on admin machines)
+  const fs = require('fs');
+  if (!fs.existsSync(PRIVATE_KEY_PATH)) {
+    throw new Error('Private key niet gevonden. Alleen beschikbaar op admin machines.');
+  }
+  
+  const crypto = require('crypto');
+  const privPem = fs.readFileSync(PRIVATE_KEY_PATH, 'utf-8');
+  const privateKey = crypto.createPrivateKey(privPem);
+  
+  const payloadB64 = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const signature = crypto.sign(null, Buffer.from(payloadB64), privateKey);
+  const sigB64 = signature.toString('base64url');
+  
+  const licenseKey = `KAIM-${payloadB64}.${sigB64}`;
+  log.info(`License generated for ${payload.email} (${payload.plan}, expires ${payload.expiresAt})`);
+  return licenseKey;
+});
+
+ipcMain.handle('get-license-info', async () => {
+  const status = checkLicense();
+  return status;
+});
+
 // ─── Custom protocol: serve renderer/out as app:// ──────────
 const RENDERER_OUT_REL = path.join('renderer', 'out');
 
@@ -217,6 +247,7 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      preload: path.join(__dirname, 'preload.js'),
     }
   });
 

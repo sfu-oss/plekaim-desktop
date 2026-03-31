@@ -1194,6 +1194,7 @@ const TABS = [
   { id: "nen3650", label: "NEN 3650", icon: "✅" },
   { id: "report", label: "Rapport", icon: "📄" },
   { id: "dhstress", label: "DHStress", icon: "🔥" },
+  { id: "admin", label: "Admin", icon: "🛡️" },
 ];
 
 // ============================================================
@@ -3513,7 +3514,106 @@ function PLECalculator() {
     </div>
   );
 
-  const tabContent: Record<string, React.ReactNode> = { input: tabInput, import: tabImport, model3d: tab3d, results: tabResults, diagrams: tabDiagrams, tekening: tabTekening, nen3650: tabNen, soil: tabSoil, report: tabReport };
+
+  // ── Admin Panel (License Generator) ────────────────────────
+  const [adminEmail, setAdminEmail] = useState("");
+  const [adminName, setAdminName] = useState("");
+  const [adminPlan, setAdminPlan] = useState("pro");
+  const [adminDays, setAdminDays] = useState("365");
+  const [generatedKey, setGeneratedKey] = useState("");
+  const [adminKeys, setAdminKeys] = useState<Array<{email:string,name:string,plan:string,days:string,key:string,date:string}>>([]);
+
+  const generateLicenseKey = async () => {
+    if (!adminEmail) return;
+    try {
+      // Use Web Crypto API with the same Ed25519 approach
+      // For desktop: call Electron IPC to generate with private key
+      const payload = {
+        v: 1,
+        email: adminEmail,
+        name: adminName,
+        plan: adminPlan,
+        issuedAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + parseInt(adminDays) * 86400000).toISOString(),
+        id: crypto.randomUUID(),
+      };
+      // Send to main process for signing
+      if (typeof window !== "undefined" && (window as any).electronAPI?.generateLicense) {
+        const key = await (window as any).electronAPI.generateLicense(payload);
+        setGeneratedKey(key);
+        setAdminKeys(prev => [...prev, { email: adminEmail, name: adminName, plan: adminPlan, days: adminDays, key, date: new Date().toISOString().split("T")[0] }]);
+      } else {
+        setGeneratedKey("⚠️ Alleen beschikbaar in desktop app met admin rechten");
+      }
+    } catch (err: any) {
+      setGeneratedKey("Fout: " + err.message);
+    }
+  };
+
+  const tabAdmin = (
+    <div>
+      <Section icon="🛡️" title="Licentie Generator" sub="Genereer offline licenties voor klanten">
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <div>
+            <label style={{ fontSize: 11, color: css.dim, display: "block", marginBottom: 4 }}>Email *</label>
+            <input value={adminEmail} onChange={e => setAdminEmail(e.target.value)} placeholder="klant@email.com"
+              style={{ width: "100%", padding: "8px 10px", background: css.card, border: `1px solid ${css.border}`, borderRadius: 6, color: css.text, fontSize: 12, fontFamily: css.mono, outline: "none" }} />
+          </div>
+          <div>
+            <label style={{ fontSize: 11, color: css.dim, display: "block", marginBottom: 4 }}>Naam</label>
+            <input value={adminName} onChange={e => setAdminName(e.target.value)} placeholder="Klantnaam"
+              style={{ width: "100%", padding: "8px 10px", background: css.card, border: `1px solid ${css.border}`, borderRadius: 6, color: css.text, fontSize: 12, fontFamily: css.mono, outline: "none" }} />
+          </div>
+          <div>
+            <label style={{ fontSize: 11, color: css.dim, display: "block", marginBottom: 4 }}>Plan</label>
+            <select value={adminPlan} onChange={e => setAdminPlan(e.target.value)}
+              style={{ width: "100%", padding: "8px 10px", background: css.card, border: `1px solid ${css.border}`, borderRadius: 6, color: css.text, fontSize: 12, fontFamily: css.mono }}>
+              <option value="trial">Trial (14 dagen)</option>
+              <option value="basic">Basic</option>
+              <option value="pro">Pro</option>
+            </select>
+          </div>
+          <div>
+            <label style={{ fontSize: 11, color: css.dim, display: "block", marginBottom: 4 }}>Geldig (dagen)</label>
+            <input value={adminDays} onChange={e => setAdminDays(e.target.value)} type="number"
+              style={{ width: "100%", padding: "8px 10px", background: css.card, border: `1px solid ${css.border}`, borderRadius: 6, color: css.text, fontSize: 12, fontFamily: css.mono, outline: "none" }} />
+          </div>
+        </div>
+        <button onClick={generateLicenseKey} style={{ marginTop: 12, padding: "10px 24px", background: css.accent, border: "none", borderRadius: 8, color: "#fff", fontWeight: 600, fontSize: 13, cursor: "pointer" }}>
+          🔑 Genereer Licentie
+        </button>
+        {generatedKey && (
+          <div style={{ marginTop: 12, padding: 12, background: "rgba(34,197,94,0.06)", border: `1px solid rgba(34,197,94,0.2)`, borderRadius: 8 }}>
+            <div style={{ fontSize: 11, color: css.green, fontWeight: 600, marginBottom: 6 }}>Gegenereerde Key:</div>
+            <div style={{ fontSize: 10, fontFamily: css.mono, color: css.text, wordBreak: "break-all", userSelect: "all", cursor: "text", padding: 8, background: css.card, borderRadius: 4 }}>
+              {generatedKey}
+            </div>
+            <button onClick={() => navigator.clipboard.writeText(generatedKey)} style={{ marginTop: 8, padding: "6px 14px", background: "rgba(59,130,246,0.1)", border: `1px solid ${css.border}`, borderRadius: 6, color: css.accent, fontSize: 11, cursor: "pointer", fontFamily: css.mono }}>
+              📋 Kopieer
+            </button>
+          </div>
+        )}
+      </Section>
+
+      {adminKeys.length > 0 && (
+        <Section icon="📋" title="Uitgegeven Licenties" sub={`${adminKeys.length} licentie(s) gegenereerd`}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {adminKeys.map((k, i) => (
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", background: css.card, borderRadius: 6, border: `1px solid ${css.border}` }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: css.text }}>{k.name || k.email}</div>
+                  <div style={{ fontSize: 10, color: css.dim, fontFamily: css.mono }}>{k.email} · {k.plan} · {k.days}d · {k.date}</div>
+                </div>
+                <button onClick={() => navigator.clipboard.writeText(k.key)} style={{ padding: "4px 10px", background: "rgba(59,130,246,0.1)", border: `1px solid ${css.border}`, borderRadius: 4, color: css.accent, fontSize: 10, cursor: "pointer" }}>📋</button>
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
+    </div>
+  );
+
+  const tabContent: Record<string, React.ReactNode> = { input: tabInput, import: tabImport, model3d: tab3d, results: tabResults, diagrams: tabDiagrams, tekening: tabTekening, nen3650: tabNen, soil: tabSoil, report: tabReport, admin: tabAdmin };
 
   // ============================================================
   // Roadmap Sidebar Component
