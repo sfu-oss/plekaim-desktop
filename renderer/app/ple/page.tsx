@@ -2985,7 +2985,7 @@ function PLECalculator() {
                 padding: "4px 10px", background: "rgba(59,130,246,0.08)", border: `1px solid rgba(59,130,246,0.2)`,
                 borderRadius: 4, color: css.accent, fontSize: 11, fontWeight: 600, textDecoration: "none", fontFamily: css.mono,
                 display: "inline-flex", alignItems: "center",
-              }}>Open</a>
+              }}>Open</button>
               <button onClick={async ()=>{
                 if (!confirm("Verwijderen?")) return;
                 // Als dit het actieve bestand is, wis de model state
