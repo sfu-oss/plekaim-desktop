@@ -1343,6 +1343,7 @@ function PLECalculator() {
   const [showRoadmap, setShowRoadmap] = useState(true);
   const [showSoilWizard, setShowSoilWizard] = useState(false);
   const [soilWizardResults, setSoilWizardResults] = useState<SoilWizardResult[]>([]);
+  const [soilWizardApplied, setSoilWizardApplied] = useState(false);
 
   const R = useMemo(() => {
     // Gebruik ISTROP data uit Excel als beschikbaar, anders fallback naar hardcoded MATERIALS
@@ -1422,12 +1423,9 @@ function PLECalculator() {
 
       case "boundary":
         if (!hasImport) return "empty";
-        // Complete als endptsMap OF supportList OF connects aanwezig is
-        if (importedMeta?.endptsMap && Object.keys(importedMeta.endptsMap).length > 0) return "complete";
-        if (importedMeta?.supportList && importedMeta.supportList.length > 0) return "complete";
-        if (importedMeta?.connects && importedMeta.connects.length > 0) return "complete";
-        // Als er FEM resultaten zijn, is het model compleet genoeg
         if (femResults.length > 0) return "complete";
+        if (importedMeta?.endptsMap && Object.keys(importedMeta.endptsMap).length > 0) return "complete";
+        if (importedMeta?.supportList?.length > 0) return "complete";
         return "partial";
 
       case "loading":
@@ -2209,6 +2207,11 @@ function PLECalculator() {
             ✓ Soil Wizard: {soilWizardResults.length} nodes berekend
           </span>
         )}
+        {soilWizardApplied && (
+          <span style={{ fontSize: 11, color: css.green, fontFamily: css.mono, padding: "4px 10px", background: "rgba(34,197,94,0.1)", borderRadius: 4, border: "1px solid rgba(34,197,94,0.3)" }}>
+            ✓ Toegepast — klik Herberekenen voor nieuwe resultaten
+          </span>
+        )}
       </div>
 
       {/* Soil Wizard (geavanceerd, per-node grondparameters) */}
@@ -2237,7 +2240,9 @@ function PLECalculator() {
                 sigmaK: p.sigmaK,
                 H_cover: p.H_cover,
               }));
-              setSoilWizardResults(results); alert(`✅ Soil Wizard: ${results.length} nodes berekend en toegepast op solver`);
+              setSoilWizardResults(results);
+              setSoilWizardApplied(true);
+              setTimeout(() => setSoilWizardApplied(false), 4000);
               // Sla ook op in pleModel als die beschikbaar is
               if (pleModel) {
                 setPleModel({ ...pleModel, soilWizardResults: results });
@@ -2614,6 +2619,9 @@ function PLECalculator() {
         const f = e.target.files?.[0]; if (!f) return;
         setImportError(""); setImporting(true); setImportFileName(f.name);
         try {
+          // Wis oude resultaten EERST zodat er geen stale UC getoond wordt
+          setFemResults([]);
+          setFemAllLC([]);
           const parsed = await parsePLEFile(f);
           setImportedNodes(parsed.nodes);
           setImportedEls(parsed.elements);
