@@ -546,26 +546,25 @@ export function calcSoilParametersAtNode(
       : 0;
   }
 
-  // ═══ KLH berekenen uit RH ═══
-  // NEN 3650-1:2020: KLH = RH / (δref × D) met δref = verplaatsing bij bereiken Rmax
-  // PLE4Win: KLH ≈ RH / (0.01 × D)  (1% van diameter als referentieverplaatsing)
-  // Alternatief voor zandig: KLH = 2 × Kq × σk / D
+  // ═══ KLH berekenen — NEN 3650-1:2020 C.4.2.1 ═══
+  // KLH = Eeff / D  (horizontale beddingsconstante)
+  // Eeff = E100 × (σv' / 100)^m  met σv' op hartdiepte buis
+  // Dit geldt voor zowel zandig als kleiig (conform PLE4Win)
+  // NB: De Kq-methode is alleen voor RH (maximale grondreactie), niet voor KLH (stijfheid)
   {
-    const phiKLH = weightedAvgPerCategory(layersGLtoBot.map(l => ({ value: l.phi, thickness: l.thickness, category: l.category })));
+    const E100KLH = weightedAvgPerCategory(layersGLtoBot.map(l => ({ value: l.E100, thickness: l.thickness, category: l.category })));
     
     var KLH_sand = 0, KLH_clay = 0;
-    if (phiKLH.hSand > 0) {
-      const Kq = calcKq(phiKLH.sand, HstarOverD);
-      KLH_sand = 2 * modelFactorKq * Kq * sigmaK / D_m;
+    if (E100KLH.hSand > 0) {
+      const Eeff = calcEffectiveE(E100KLH.sand, sigmaK * 1000, "sand");
+      KLH_sand = Eeff / D_m;
     }
-    if (phiKLH.hClay > 0) {
-      // Klei: KLH via Eeff benadering
-      const E100Clay = weightedAvg(layersGLtoBot.filter(l => l.category === "clay").map(l => ({ value: l.E100, thickness: l.thickness })));
-      const EeffClay = calcEffectiveE(E100Clay, sigmaK * 1000, "clay");
-      KLH_clay = EeffClay / D_m;
+    if (E100KLH.hClay > 0) {
+      const Eeff = calcEffectiveE(E100KLH.clay, sigmaK * 1000, "clay");
+      KLH_clay = Eeff / D_m;
     }
     var KLH = hTotalBot > 0 
-      ? (KLH_sand * hSandBot + KLH_clay * hClayBot) / hTotalBot 
+      ? (KLH_sand * E100KLH.hSand + KLH_clay * E100KLH.hClay) / (E100KLH.hSand + E100KLH.hClay || 1) 
       : 0;
   }
 
