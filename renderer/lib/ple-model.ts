@@ -713,10 +713,6 @@ export function parseSheetsToModel(sheets: Record<string, any[][]>): PleModel {
   if (loadCases.length === 0) {
     loadCases.push({ lc: "Bedrijf", gloadF: 1, pressF: 1, tDifF: 1, deadwF: 1, setlF: 1, nodalF: 0, elbndF: 0, wavcF: 0 });
   }
-  const hasFullLC = loadCases.some(lc => lc.pressF > 0 || lc.tDifF > 0);
-  if (!hasFullLC) {
-    loadCases.push({ lc: "Bedrijf", gloadF: 1, pressF: 1, tDifF: 1, deadwF: 1, setlF: 1, nodalF: 0, elbndF: 0, wavcF: 0 });
-  }
 
   // SUBSIDE
   const subside: PleSubside[] = sheetToObjects(sheets.SUBSIDE || []).map(s => ({
