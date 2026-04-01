@@ -38,6 +38,11 @@ type FemNodeResult = {
   sb: number; Fx: number; My: number; Mz: number;
   ux: number; uy: number; uz: number;
 };
+
+type PleDisplacement = {
+  nodeId: string;
+  ux: number; uy: number; uz: number;
+};
 type SoilWizardData = {
   nodeId: string; nodeIndex: number;
   KLH: number; KLS: number; KLT: number;
@@ -54,6 +59,7 @@ type Props = {
   tees?: Record<string, any>;
   SMYS?: number;
   femResults?: FemNodeResult[];
+  pleDisplacements?: PleDisplacement[];
   coverMap?: Record<string, number>;
   waterMap?: Record<string, number>;
   soilWizardResults?: SoilWizardData[];
@@ -117,7 +123,7 @@ function Chk({ checked, onChange, label, color }: { checked: boolean; onChange: 
 export default function Ple3DViewer({
   D, t, matName, Pi, dT, sh, vm, unity,
   nodes, elements, endpoints, connects, supports, tees, SMYS = 235,
-  femResults, coverMap, waterMap, soilWizardResults,
+  femResults, pleDisplacements, coverMap, waterMap, soilWizardResults,
 }: Props) {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -166,6 +172,18 @@ export default function Ple3DViewer({
   // ── State: histogram ──
   const [histMin, setHistMin] = useState(0);
   const [histMax, setHistMax] = useState(1);
+
+  const dispFallback = useMemo<FemNodeResult[] | null>(() => {
+    if (femResults && femResults.length > 0) return null;
+    if (!pleDisplacements || pleDisplacements.length === 0) return null;
+    return pleDisplacements.map(d => ({
+      nodeId: d.nodeId,
+      ux: d.ux, uy: d.uy, uz: d.uz,
+      uc: 0, ucRing: 0, ucVM: 0,
+      sh: 0, sl: 0, vm: 0, sb: 0,
+      Fx: 0, My: 0, Mz: 0,
+    }));
+  }, [femResults, pleDisplacements]);
 
   const teeIdSet = useMemo(() => new Set(connects?.map(c => c.id1) || []), [connects]);
   const endpointIdSet = useMemo(() => new Set(Object.keys(endpoints || {})), [endpoints]);
@@ -381,7 +399,8 @@ export default function Ple3DViewer({
         ? elements : nodes.slice(0, -1).map((_, i) => ({ n1: i, n2: i + 1 }));
 
       const nodeResultMap = new Map<string, FemNodeResult>();
-      if (femResults) femResults.forEach(r => nodeResultMap.set(r.nodeId, r));
+      const resultSource = (femResults && femResults.length > 0) ? femResults : (dispFallback || []);
+      if (resultSource && resultSource.length > 0) resultSource.forEach(r => nodeResultMap.set(r.nodeId, r));
 
       useEls.forEach((elm, ei) => {
         const n1 = nodes[elm.n1]; const n2 = nodes[elm.n2];
@@ -466,7 +485,7 @@ export default function Ple3DViewer({
       });
 
       // ── Displaced pipeline overlay ──
-      if (showDisplaced && femResults && femResults.length > 0) {
+      if (showDisplaced && resultSource && resultSource.length > 0) {
         const dS = deformScale;
         useEls.forEach((elm) => {
           const n1 = nodes[elm.n1]; const n2 = nodes[elm.n2]; if (!n1 || !n2) return;
@@ -875,7 +894,7 @@ export default function Ple3DViewer({
   }, [nodes, elements, D, t, pipeScale, colorMode, resultData, showCasing, hideOuter, showDisplaced, deformScale,
       showConstraints, showConnections, showIdents, showNodeNums, showElemNums, showBendIndicators,
       showGroundLevel, showWaterLevel, showPolygonPts, showElasticElements, showSoilZones,
-      unity, teeIdSet, endpointIdSet, supportIdSet, endpoints, femResults, histMin, histMax, getNodeValue, coverMap, waterMap, soilWizardResults, soilWizMap]);
+      unity, teeIdSet, endpointIdSet, supportIdSet, endpoints, femResults, dispFallback, histMin, histMax, getNodeValue, coverMap, waterMap, soilWizardResults, soilWizMap]);
 
   // ── View presets ──
   const setView = (v: string) => {

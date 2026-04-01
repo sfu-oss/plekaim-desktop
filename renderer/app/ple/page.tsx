@@ -770,7 +770,23 @@ function parsePLEFile(file: File): Promise<{ nodes: any[], elements: any[], meta
           SOILCTL: parseSheet("SOILCTL"),
           DEADW: parseSheet("DEADW"),
           GROUPS: parseSheet("GROUPS"),
+          DISPLAC: parseSheet("DISPLAC"),
+          DISCOOR: parseSheet("DISCOOR"),
+          CSTRESS: parseSheet("CSTRESS"),
         };
+
+        // PLE4Win output: DISPLAC (verplaatsingen) → 3D viewer overlay
+        try {
+          const dispRows = sheetToObjects(parseSheet("DISPLAC"));
+          if (dispRows.length > 0) {
+            meta.outputDisplacements = dispRows.map((r: any) => ({
+              nodeId: normalizeId(r.NODE || r.IDENT || r.Identifier),
+              ux: toNum(r["U-X"]) || 0,
+              uy: toNum(r["U-Y"]) || 0,
+              uz: toNum(r["U-Z"]) || 0,
+            }));
+          }
+        } catch { /* DISPLAC niet beschikbaar */ }
 
         // GEOMCTL: geometrisch niet-lineaire instellingen (optioneel)
         try {
@@ -1785,7 +1801,7 @@ function PLECalculator() {
         <Badge pass={n.vp} label="VM" unity={n.vu} compact={mobile} />
         <Badge pass={n.ok} label="Totaal" unity={n.cu} compact={mobile} />
       </div>
-      <Ple3DViewer D={D} t={t} matName={matName} Pi={Pi} dT={dT} sh={s.sh} vm={s.vm} unity={n.cu} nodes={importedNodes} elements={importedEls} endpoints={importedMeta?.endptsMap} connects={importedMeta?.connects || []} supports={importedMeta?.supportList || []} tees={importedMeta?.teeSpecData} SMYS={m.SMYS} femResults={femResults} coverMap={importedMeta?.coverMap} waterMap={importedMeta?.waterMap} soilWizardResults={soilWizardResults} />
+      <Ple3DViewer D={D} t={t} matName={matName} Pi={Pi} dT={dT} sh={s.sh} vm={s.vm} unity={n.cu} nodes={importedNodes} elements={importedEls} endpoints={importedMeta?.endptsMap} connects={importedMeta?.connects || []} supports={importedMeta?.supportList || []} tees={importedMeta?.teeSpecData} SMYS={m.SMYS} femResults={femResults} pleDisplacements={importedMeta?.outputDisplacements} coverMap={importedMeta?.coverMap} waterMap={importedMeta?.waterMap} soilWizardResults={soilWizardResults} />
     </div>
   );
 
