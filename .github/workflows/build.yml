@@ -10,7 +10,21 @@ permissions:
   contents: write
 
 jobs:
+  prepare-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ensure draft release exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --draft --title "$TAG"
+
   build-mac:
+    needs: [prepare-release]
     runs-on: macos-latest
     permissions:
       contents: write
@@ -31,6 +45,7 @@ jobs:
         run: npx electron-builder --mac --arm64 --x64 --publish always
 
   build-windows:
+    needs: [prepare-release]
     runs-on: windows-latest
     permissions:
       contents: write
