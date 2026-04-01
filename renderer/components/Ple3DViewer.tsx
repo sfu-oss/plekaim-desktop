@@ -228,6 +228,15 @@ export default function Ple3DViewer({
   const [showElasticElements, setShowElasticElements] = useState(false);
   const [showCasing, setShowCasing] = useState(false);
   const [showSoilZones, setShowSoilZones] = useState(false);
+  const [showSettlements, setShowSettlements] = useState(false);
+  const [isCenterline, setIsCenterline] = useState(false);
+
+  // ── State: element group filtering (PLE4Win AVGRPS) ──
+  const [activeGroup, setActiveGroup] = useState<string>("");
+
+  // ── State: hover tooltip (PLE4Win element info on hover) ──
+  const [hoverInfo, setHoverInfo] = useState<{ x: number; y: number; data: any } | null>(null);
+  const hoverTimerRef = useRef<any>(null);
 
   // ── State: element info ──
   const [selectedInfo, setSelectedInfo] = useState<any>(null);
@@ -235,6 +244,7 @@ export default function Ple3DViewer({
   // ── State: histogram ──
   const [histMin, setHistMin] = useState(0);
   const [histMax, setHistMax] = useState(1);
+  const [histRef, setHistRef] = useState<number | null>(null);
 
   const dispFallback = useMemo<FemNodeResult[] | null>(() => {
     if (femResults && femResults.length > 0) return null;
@@ -249,6 +259,28 @@ export default function Ple3DViewer({
   }, [femResults, pleDisplacements]);
 
   const teeIdSet = useMemo(() => new Set(connects?.map(c => c.id1) || []), [connects]);
+
+  // ── Element groups (PLE4Win AVGRPS) ──
+  const elementGroups = useMemo(() => {
+    if (!elements || elements.length === 0) return [];
+    const pipe: number[] = [], bend: number[] = [], elastic: number[] = [], tee: number[] = [];
+    elements.forEach((el, i) => {
+      const bR = el.R || el.bendR || 0;
+      const elD = el.d || D;
+      if (el.type === "tee") tee.push(i);
+      else if (el.type === "bend" && bR > 0 && (bR / elD) < 15) bend.push(i);
+      else if (el.type === "bend" || (bR > 0 && (bR / elD) >= 15)) elastic.push(i);
+      else pipe.push(i);
+    });
+    return [
+      { name: "All physical elements", indices: elements.map((_, i) => i) },
+      { name: "Pipe elements", indices: pipe },
+      { name: "Bend, elastic + mitre elements", indices: [...bend, ...elastic] },
+      { name: "Bend elements", indices: bend },
+      { name: "Elastic elements", indices: elastic },
+      { name: "Tees (all)", indices: tee },
+    ].filter(g => g.indices.length > 0);
+  }, [elements, D]);
   const elementResultMap = useMemo(() => {
     if (!pleElementResults || pleElementResults.length === 0) return null;
     const m = new Map<number, PleElementResult>();
@@ -431,7 +463,31 @@ export default function Ple3DViewer({
 
     const onDown = (e: any) => { isD = true; const ev = e.touches ? e.touches[0] : e; pX = ev.clientX; pY = ev.clientY; isPan = e.button === 2 || e.button === 1; };
     const onMove = (e: any) => {
-      if (!isD) return; const ev = e.touches ? e.touches[0] : e; if (!ev) return;
+      if (!isD) {
+        // Hover detection — throttled raycasting
+        if (hoverTimerRef.current) return;
+        hoverTimerRef.current = setTimeout(() => {
+          hoverTimerRef.current = null;
+          const rect = el.getBoundingClientRect();
+          const mx = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+          const my = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+          mouseRef.current.set(mx, my);
+          raycasterRef.current.setFromCamera(mouseRef.current, camera);
+          const hits = raycasterRef.current.intersectObjects(pg.children, false);
+          if (hits.length > 0 && hits[0].object.userData?.elementIndex !== undefined) {
+            const ud = hits[0].object.userData;
+            setHoverInfo({
+              x: e.clientX - rect.left + 14,
+              y: e.clientY - rect.top - 8,
+              data: ud,
+            });
+          } else {
+            setHoverInfo(null);
+          }
+        }, 60);
+        return;
+      }
+      const ev = e.touches ? e.touches[0] : e; if (!ev) return;
       const dx = ev.clientX - pX, dy = ev.clientY - pY;
       if (isPan) {
         const cr = new THREE.Vector3(); const cu = new THREE.Vector3();
@@ -510,11 +566,22 @@ export default function Ple3DViewer({
       const useEls: ElementData[] = elements && elements.length > 0
         ? elements : nodes.slice(0, -1).map((_, i) => ({ n1: i, n2: i + 1 }));
 
+      // Group filtering: determine which elements to render
+      const visibleSet = new Set<number>();
+      if (!activeGroup) {
+        useEls.forEach((_, i) => visibleSet.add(i));
+      } else {
+        const grp = elementGroups.find(g => g.name === activeGroup);
+        if (grp) grp.indices.forEach(i => visibleSet.add(i));
+        else useEls.forEach((_, i) => visibleSet.add(i));
+      }
+
       const nodeResultMap = new Map<string, FemNodeResult>();
       const resultSource = (femResults && femResults.length > 0) ? femResults : (dispFallback || []);
       if (resultSource && resultSource.length > 0) resultSource.forEach(r => nodeResultMap.set(r.nodeId, r));
 
       useEls.forEach((elm, ei) => {
+        if (!visibleSet.has(ei)) return;
         const n1 = nodes[elm.n1]; const n2 = nodes[elm.n2];
         if (!n1 || !n2) return;
         const p1 = getNodePos(n1); const p2 = getNodePos(n2);
@@ -522,6 +589,28 @@ export default function Ple3DViewer({
         const dir = new THREE.Vector3().subVectors(p2, p1);
         const len = dir.length();
         if (len <= 0.0001) return;
+
+        // Centreline mode — just draw coloured lines, skip tube geometry
+        if (isCenterline) {
+          const nr1c = nodeResultMap.get(n1.id || "");
+          const nr2c = nodeResultMap.get(n2.id || "");
+          const range = (histMax - histMin) || 1;
+          const nv1 = colorMode === "result" ? (getNodeValue(nr1c) - histMin) / range : 0.5;
+          const nv2 = colorMode === "result" ? (getNodeValue(nr2c) - histMin) / range : 0.5;
+          const c1 = colorMode === "result" ? getGradientColor(nv1) : new THREE.Color(0x88aacc);
+          const c2 = colorMode === "result" ? getGradientColor(nv2) : new THREE.Color(0x88aacc);
+          const lineGeo = new THREE.BufferGeometry();
+          const positions = new Float32Array([p1.x, p1.y, p1.z, p2.x, p2.y, p2.z]);
+          const colors = new Float32Array([c1.r, c1.g, c1.b, c2.r, c2.g, c2.b]);
+          lineGeo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+          lineGeo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+          const lineMat = new THREE.LineBasicMaterial({ vertexColors: true, linewidth: 2 });
+          const line = new THREE.Line(lineGeo, lineMat);
+          line.userData = { elementIndex: ei, nodeId1: n1.id, nodeId2: n2.id, d: elm.d || D, t: elm.t || t, type: elm.type, R: elm.R || elm.bendR || 0, len: len * 1000 };
+          pg.add(line);
+          return; // skip tube geometry
+        }
+
         const elD = elm.d || D;
         // PLE4Win: correcte diameter per segment — elD/2 in meters, × scale
         const pipeRadius = (elD / 2000) * scale;
@@ -988,6 +1077,34 @@ export default function Ple3DViewer({
         });
       }
 
+      // ── Settlements overlay (PLE4Win LayerType.Settlements) ──
+      // Groene centreline die de verticale verplaatsing toont
+      if (showSettlements && resultSource && resultSource.length > 0) {
+        const settlPoints: THREE.Vector3[] = [];
+        nodes.forEach((n, ni) => {
+          const nr = nodeResultMap.get(n.id || "");
+          const uz = nr?.uz || 0;
+          // Settlements: toon de zakking (uz) overdreven, net als displaced maar alleen verticaal
+          const pos = getNodePos(n);
+          settlPoints.push(new THREE.Vector3(pos.x, pos.y + uz / 1000 * deformScale * 0.5, pos.z));
+        });
+        if (settlPoints.length > 1) {
+          const settlGeo = new THREE.BufferGeometry().setFromPoints(settlPoints);
+          const settlMat = new THREE.LineBasicMaterial({ color: 0x44cc44, linewidth: 2 });
+          pg.add(new THREE.Line(settlGeo, settlMat));
+          // Lichte verticale streepjes van pipeline naar settlement line
+          for (let i = 0; i < settlPoints.length; i += Math.max(1, Math.floor(settlPoints.length / 30))) {
+            const p = getNodePos(nodes[i]);
+            const s = settlPoints[i];
+            if (Math.abs(p.y - s.y) > 0.001) {
+              const dashGeo = new THREE.BufferGeometry().setFromPoints([p, s]);
+              const dashMat = new THREE.LineBasicMaterial({ color: 0x44cc44, transparent: true, opacity: 0.3 });
+              pg.add(new THREE.Line(dashGeo, dashMat));
+            }
+          }
+        }
+      }
+
       // ── Elastic Elements (highlight bochten met hoge R/D) ──
       if (showElasticElements) {
         useEls.forEach((elm) => {
@@ -1105,8 +1222,8 @@ export default function Ple3DViewer({
     pg.add(new THREE.GridHelper(200, 100, 0x8899aa, 0xaabbcc));
   }, [nodes, elements, D, t, pipeScale, colorMode, resultData, showCasing, hideOuter, showDisplaced, deformScale,
       showConstraints, showConnections, showIdents, showNodeNums, showElemNums, showBendIndicators,
-      showGroundLevel, showWaterLevel, showPolygonPts, showElasticElements, showSoilZones,
-      unity, teeIdSet, endpointIdSet, supportIdSet, endpoints, femResults, dispFallback, elementResultMap, histMin, histMax, getNodeValue, getElementValue, coverMap, waterMap, soilWizardResults, soilWizMap]);
+      showGroundLevel, showWaterLevel, showPolygonPts, showElasticElements, showSoilZones, showSettlements, isCenterline, activeGroup,
+      unity, teeIdSet, endpointIdSet, supportIdSet, endpoints, femResults, dispFallback, elementResultMap, histMin, histMax, getNodeValue, getElementValue, coverMap, waterMap, soilWizardResults, soilWizMap, elementGroups]);
 
   // ── View presets ──
   const setView = (v: string) => {
@@ -1153,19 +1270,62 @@ export default function Ple3DViewer({
     link.click();
   }, []);
 
-  // ── Histogram gradient bar (canvas) ──
+  // ── Histogram with bins (PLE4Win-stijl) ──
   const histCanvasRef = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     const c = histCanvasRef.current; if (!c) return;
     const ctx = c.getContext("2d"); if (!ctx) return;
     const w = c.width, h = c.height;
-    for (let y = 0; y < h; y++) {
-      const t = 1 - y / h;
+    ctx.clearRect(0, 0, w, h);
+
+    // Draw gradient colour bar (right side)
+    const barW = 20, barX = w - barW - 2, barH = h - 4, barY = 2;
+    for (let y = 0; y < barH; y++) {
+      const t = 1 - y / barH;
       const col = getGradientColor(t);
       ctx.fillStyle = `rgb(${Math.round(col.r * 255)},${Math.round(col.g * 255)},${Math.round(col.b * 255)})`;
-      ctx.fillRect(0, y, w, 1);
+      ctx.fillRect(barX, barY + y, barW, 1);
     }
-  }, []);
+
+    // Calculate and draw histogram bins
+    const nBins = 20;
+    const bins = new Array(nBins).fill(0);
+    const resultSource2 = (femResults && femResults.length > 0) ? femResults : [];
+    const range = (histMax - histMin) || 1;
+    resultSource2.forEach((r: any) => {
+      const v = getNodeValue(r);
+      const t = Math.max(0, Math.min(1, (v - histMin) / range));
+      const bi = Math.min(nBins - 1, Math.floor(t * nBins));
+      bins[bi]++;
+    });
+    const maxBin = Math.max(...bins, 1);
+    const histW = barX - 6;
+
+    bins.forEach((count, i) => {
+      const t = (i + 0.5) / nBins;
+      const bh = (count / maxBin) * histW;
+      const by = barY + (1 - (i + 1) / nBins) * barH;
+      const binH = barH / nBins;
+      const col = getGradientColor(t);
+      ctx.fillStyle = `rgba(${Math.round(col.r * 255)},${Math.round(col.g * 255)},${Math.round(col.b * 255)},0.6)`;
+      ctx.fillRect(4, by, bh, binH - 1);
+    });
+
+    // Reference line
+    if (histRef !== null && histRef >= histMin && histRef <= histMax) {
+      const ry = barY + (1 - (histRef - histMin) / range) * barH;
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 3]);
+      ctx.beginPath(); ctx.moveTo(2, ry); ctx.lineTo(w - 2, ry); ctx.stroke();
+      ctx.setLineDash([]);
+      // Label
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "bold 7px monospace";
+      ctx.textAlign = "left";
+      ctx.fillText(`ref: ${histRef.toFixed(1)}`, 4, ry - 3);
+    }
+  }, [histMin, histMax, histRef, femResults, getNodeValue]);
 
   // ═══ RENDER UI ═══
   return (
@@ -1184,6 +1344,20 @@ export default function Ple3DViewer({
         <div style={{ fontSize: 10, color: accentBlue, fontWeight: 700, borderBottom: `1px solid ${panelBorder}`, paddingBottom: 4 }}>
           Pipeline graphical representation
         </div>
+
+        {/* ── Group filter dropdown (PLE4Win AVGRPS) ── */}
+        {elementGroups.length > 0 && (
+          <div style={{ borderBottom: `1px solid ${panelBorder}`, paddingBottom: 6 }}>
+            <div style={{ color: textDim, fontSize: 9, fontWeight: 600, marginBottom: 3, textTransform: "uppercase" }}>Group</div>
+            <select value={activeGroup} onChange={e => setActiveGroup(e.target.value)} style={{
+              width: "100%", padding: "3px 4px", background: "#0f172a", border: `1px solid ${panelBorder}`,
+              borderRadius: 4, color: textBright, fontSize: 9, fontFamily: F,
+            }}>
+              <option value="">— no group selected —</option>
+              {elementGroups.map(g => <option key={g.name} value={g.name}>{g.name} ({g.indices.length})</option>)}
+            </select>
+          </div>
+        )}
 
         {/* Element details (als geselecteerd) */}
         {selectedInfo && (
@@ -1228,9 +1402,9 @@ export default function Ple3DViewer({
               {Object.entries(resultLabels).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
             </select>
 
-            {/* Value histogram gradient bar */}
+            {/* Value histogram with bins (PLE4Win-stijl) */}
             <div style={{ display: "flex", gap: 4, alignItems: "stretch" }}>
-              <canvas ref={histCanvasRef} width={24} height={120} style={{ borderRadius: 3, border: `1px solid ${panelBorder}` }} />
+              <canvas ref={histCanvasRef} width={120} height={140} style={{ borderRadius: 3, border: `1px solid ${panelBorder}`, background: "rgba(0,0,0,0.3)" }} />
               <div style={{ display: "flex", flexDirection: "column", justifyContent: "space-between", fontSize: 8, color: textMuted }}>
                 <span>{histMax.toFixed(2)}</span>
                 <span>{((histMax + histMin) / 2).toFixed(2)}</span>
@@ -1243,8 +1417,15 @@ export default function Ple3DViewer({
               <span style={{ color: textDim }}>Max:</span>
               <input type="number" value={histMax} onChange={e => setHistMax(Number(e.target.value))} style={{ width: 50, background: "#0f172a", border: `1px solid ${panelBorder}`, borderRadius: 3, color: textBright, fontSize: 8, fontFamily: F, padding: "1px 3px" }} />
             </div>
+            <div style={{ display: "flex", gap: 4, marginTop: 3, fontSize: 8, alignItems: "center" }}>
+              <span style={{ color: textDim }}>Ref:</span>
+              <input type="text" value={histRef !== null ? histRef : ""} placeholder="—"
+                onChange={e => { const v = parseFloat(e.target.value); setHistRef(isNaN(v) ? null : v); }}
+                style={{ width: 50, background: "#0f172a", border: `1px solid ${panelBorder}`, borderRadius: 3, color: "#ffffff", fontSize: 8, fontFamily: F, padding: "1px 3px" }} />
+              <span style={{ color: textDim, fontSize: 7 }}>{resultUnits[resultData]}</span>
+            </div>
             <div style={{ display: "flex", gap: 4, marginTop: 4 }}>
-              <button onClick={() => { setHistMin(minVal); setHistMax(maxVal); }} style={{ flex: 1, padding: "2px 4px", background: "rgba(52,152,219,0.1)", border: `1px solid rgba(52,152,219,0.2)`, borderRadius: 3, color: accentBlue, fontSize: 8, fontFamily: F, cursor: "pointer" }}>Reset</button>
+              <button onClick={() => { setHistMin(minVal); setHistMax(maxVal); setHistRef(null); }} style={{ flex: 1, padding: "2px 4px", background: "rgba(52,152,219,0.1)", border: `1px solid rgba(52,152,219,0.2)`, borderRadius: 3, color: accentBlue, fontSize: 8, fontFamily: F, cursor: "pointer" }}>Reset</button>
             </div>
           </div>
         )}
@@ -1272,6 +1453,7 @@ export default function Ple3DViewer({
           <div style={{ height: 4 }} />
           <Chk checked={showGroundLevel} onChange={setShowGroundLevel} label="Ground Level" />
           <Chk checked={showWaterLevel} onChange={setShowWaterLevel} label="Water Level" />
+          <Chk checked={showSettlements} onChange={setShowSettlements} label="Settlements" color="#22c55e" />
           {soilWizardResults && soilWizardResults.length > 0 && (
             <Chk checked={showSoilZones} onChange={setShowSoilZones} label="Soil Zones (KLH)" color="#d4a44a" />
           )}
@@ -1295,6 +1477,7 @@ export default function Ple3DViewer({
           <Chk checked={showElasticElements} onChange={setShowElasticElements} label="Elastic Elements" />
           <Chk checked={showCasing} onChange={setShowCasing} label="PE mantel" color="#2c3e50" />
           <div style={{ height: 4 }} />
+          <Chk checked={isCenterline} onChange={setIsCenterline} label="Centreline only" />
           <Chk checked={isOrtho} onChange={setIsOrtho} label="Orthographic projection" />
         </div>
 
@@ -1364,6 +1547,49 @@ export default function Ple3DViewer({
       {/* ═══ Controls hint bottom ═══ */}
       <div style={{ position: "absolute", bottom: 6, left: 8, zIndex: 10, fontSize: 8, color: "#5a6a7a", fontFamily: F, background: "rgba(255,255,255,0.7)", padding: "2px 8px", borderRadius: 4 }}>
         Slepen = draaien · Rechts = pannen · Scroll = zoom · 2×klik = focus · Rechts 2× = reset
+      </div>
+
+      {/* ═══ HOVER TOOLTIP — PLE4Win element info on mouseover ═══ */}
+      {hoverInfo && (
+        <div style={{
+          position: "absolute", left: hoverInfo.x, top: hoverInfo.y,
+          background: "rgba(255,255,220,0.96)", border: "1px solid #cc9",
+          borderRadius: 4, padding: "5px 8px", zIndex: 20,
+          fontSize: 9, fontFamily: F, color: "#333",
+          lineHeight: 1.5, pointerEvents: "none",
+          whiteSpace: "nowrap", boxShadow: "0 2px 8px rgba(0,0,0,0.2)",
+        }}>
+          {hoverInfo.data.elementIndex !== undefined && <div><b>Element number:</b> {hoverInfo.data.elementIndex + 1}</div>}
+          {hoverInfo.data.len && <div><b>Element length:</b> {hoverInfo.data.len.toFixed(1)} mm</div>}
+          {hoverInfo.data.d && <div><b>Diameter:</b> {hoverInfo.data.d.toFixed(1)} mm</div>}
+          {hoverInfo.data.t && <div><b>Wall thickness:</b> {hoverInfo.data.t} mm</div>}
+          {hoverInfo.data.type && <div><b>Element type:</b> {hoverInfo.data.type === "bend" ? "Bend element" : hoverInfo.data.type === "tee" ? "Tee element" : "Pipe"}</div>}
+          {hoverInfo.data.R > 0 && <div><b>Bend radius:</b> {hoverInfo.data.R.toFixed(0)} mm</div>}
+          {hoverInfo.data.uc !== undefined && <div><b>UC:</b> <span style={{ color: hoverInfo.data.uc > 1 ? "#d00" : hoverInfo.data.uc > 0.85 ? "#b80" : "#080", fontWeight: 700 }}>{hoverInfo.data.uc.toFixed(3)}</span></div>}
+        </div>
+      )}
+
+      {/* ═══ VIEWCUBE — PLE4Win-stijl navigatiekubus ═══ */}
+      <div style={{
+        position: "absolute", top: 50, right: mob ? 170 : 190, zIndex: 10,
+        width: 70, height: 70, borderRadius: 4,
+        background: "rgba(0,0,0,0.35)", border: "1px solid rgba(255,255,255,0.08)",
+        display: "grid", gridTemplateColumns: "1fr 1fr", gridTemplateRows: "1fr 1fr", gap: 1, padding: 2,
+        cursor: "pointer", overflow: "hidden",
+      }}>
+        {[
+          { l: "FRONT", bg: "rgba(74,127,181,0.8)", th: 0, ph: Math.PI / 2 },
+          { l: "RIGHT", bg: "rgba(90,154,90,0.8)", th: Math.PI / 2, ph: Math.PI / 2 },
+          { l: "TOP", bg: "rgba(181,74,74,0.8)", th: 0, ph: 0.01 },
+          { l: "BACK", bg: "rgba(74,127,181,0.5)", th: Math.PI, ph: Math.PI / 2 },
+        ].map(f => (
+          <div key={f.l} onClick={() => { const o = orbitRef.current; if (o) { o.th = f.th; o.ph = f.ph; animateCamera(o.tgt.clone(), o.rad, 400); } }}
+            style={{
+              background: f.bg, borderRadius: 2, display: "flex", alignItems: "center",
+              justifyContent: "center", fontSize: 7, fontWeight: 700, color: "#fff",
+              fontFamily: F, cursor: "pointer",
+            }}>{f.l}</div>
+        ))}
       </div>
 
       {/* Material info bottom-right */}
