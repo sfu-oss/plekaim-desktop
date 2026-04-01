@@ -737,6 +737,7 @@ async function tryNativeEngineSolve(input: FemSolverInput): Promise<FemSolverOut
       nNodes: result.nNodes,
       nElements: result.nElements,
       nDof: result.nDof,
+      globalDisplacements: new Float64Array(result.nDof || 0),
       elementForces: [], // TODO: pass element forces from native
       converged: result.solveOk,
       iterations: 1,
