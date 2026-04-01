@@ -15,4 +15,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   importsSave: (payload) => ipcRenderer.invoke('imports-save', payload),
   importsGet: (id) => ipcRenderer.invoke('imports-get', { id }),
   importsDelete: (id) => ipcRenderer.invoke('imports-delete', { id }),
+  // Native FEM engine (complete C++ pipeline)
+  nativeSolverAvailable: () => ipcRenderer.invoke('native-solver-available'),
+  nativeEngineSolve: (input) => ipcRenderer.invoke('native-engine-solve', input),
 });

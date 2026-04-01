@@ -1,8 +1,8 @@
 {
   "name": "kaimple-desktop",
-  "version": "0.3.6",
+  "version": "0.4.0",
   "private": true,
-  "description": "KaimPLE desktop app (Electron + Next.js)",
+  "description": "KaimPLE desktop app (Electron + Next.js + Native FEM Solver)",
   "main": "electron/main.js",
   "author": "sfu-oss",
   "scripts": {
@@ -10,7 +10,8 @@
     "dev:electron": "ELECTRON_DISABLE_SECURITY_WARNINGS=1 electron .",
     "dev": "concurrently \"npm:dev:renderer\" \"wait-on http://localhost:3000 && npm:dev:electron\"",
     "build:renderer": "cd renderer && npm run build && cd .. && node scripts/fix-paths.js",
-    "build": "npm run build:renderer && electron-builder",
+    "build:solver": "cd native-solver && bash setup-eigen.sh && npm install && npm run build",
+    "build": "npm run build:solver && npm run build:renderer && electron-builder",
     "dist": "npm run build",
     "postinstall": "cd renderer && npm install"
   },
@@ -21,6 +22,13 @@
       "electron/**/*",
       "renderer/out/**/*",
       "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "native-solver",
+        "to": "native-solver",
+        "filter": ["index.js", "package.json", "build/**/*.node"]
+      }
     ],
     "asar": true,
     "directories": {

@@ -374,6 +374,8 @@ function parsePLEFile(file: File): Promise<{ nodes: any[], elements: any[], meta
               z: zN - oz,
               bendR,
               etyp: p.ETYP || p.BEND_EL || p.PIPE_EL || "",
+              pipeEl: toNum(p.PIPE_EL || p["PIPE-EL"]) || 0,
+              bendEl: toNum(p.BEND_EL || p["BEND-EL"]) || 0,
               D0: toNum(p.D0),
               DPE: toNum(p.DPE),
             });
@@ -1568,16 +1570,28 @@ function PLECalculator() {
       });
     }
 
-    // --- Per-element materiaal uit ISTROP ---
+    // --- Per-element materiaal uit ISTROP + PIPE_EL voor mesh subdivision ---
     const perElementMaterials = new Map<number, any>();
     const istropMap = parsed.meta.istropMap || {};
-    if (Object.keys(istropMap).length > 0) {
-      parsed.elements.forEach((el: any, ei: number) => {
-        for (const [, matData] of Object.entries(istropMap)) {
-          if (matData) { perElementMaterials.set(ei, matData as any); break; }
-        }
-      });
-    }
+    parsed.elements.forEach((el: any, ei: number) => {
+      const n1 = femNodes[el.n1];
+      const n2 = femNodes[el.n2];
+      const pipeEl = (n1 as any)?.pipeEl || (n2 as any)?.pipeEl || 0;
+      const bendEl = (n1 as any)?.bendEl || (n2 as any)?.bendEl || 0;
+      // Start met ISTROP materiaaldata
+      let matData: any = null;
+      for (const [, md] of Object.entries(istropMap)) {
+        if (md) { matData = { ...(md as any) }; break; }
+      }
+      // Voeg pipeEl toe voor mesh subdivision
+      if (matData) {
+        matData.pipeEl = pipeEl;
+        matData.bendEl = bendEl;
+        perElementMaterials.set(ei, matData);
+      } else if (pipeEl > 0 || bendEl > 0) {
+        perElementMaterials.set(ei, { pipeEl, bendEl });
+      }
+    });
 
     // --- Steunpunten uit SUPPORT + ELSPRS ---
     const supportBCs: any[] = [];
@@ -1633,7 +1647,7 @@ function PLECalculator() {
     setFemProgressPct(25);
 
     if (lcList.length > 1) {
-      const result = solveAllLoadCases(
+      const result = await solveAllLoadCases(
         femNodes, parsed.elements, mat, PiVal, ToperVal, TinstallVal,
         lcList, subsideMapVal, bcsArg, soilArg,
         undefined, undefined, // designFactor, gammaM
@@ -1661,7 +1675,7 @@ function PLECalculator() {
         _femElementForces: result.perLC[worstLCIdx]?.elementForces,
       };
     } else {
-      const result = solveFEM({
+      const result = await solveFEM({
         nodes: femNodes, elements: parsed.elements, mat,
         Pi_bar: PiVal, Toper: ToperVal, Tinstall: TinstallVal,
         loadCase: lcList[0] || { lc: 1, gloadF: 1, pressF: 1, tDifF: 1, deadwF: 1, setlF: 1 },

@@ -1,0 +1,15 @@
+{
+  "name": "kaimple-solver",
+  "version": "0.3.6",
+  "description": "Native sparse FEM solver for KaimPLE (Eigen SparseLU)",
+  "main": "index.js",
+  "scripts": {
+    "install": "node-gyp rebuild",
+    "build": "node-gyp rebuild",
+    "clean": "node-gyp clean"
+  },
+  "dependencies": {
+    "node-addon-api": "^7.1.0",
+    "node-gyp": "^10.1.0"
+  }
+}

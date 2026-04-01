@@ -335,6 +335,56 @@ ipcMain.handle('imports-delete', async (event, { id }) => {
   return { success: true };
 });
 
+// ─── Native FEM Engine (Complete C++ pipeline) ──────────────
+let nativeEngine = null;
+let nativeEngineError = null;
+
+try {
+  const enginePath = isDev
+    ? path.join(__dirname, '..', 'native-solver')
+    : path.join(process.resourcesPath, 'native-solver');
+  nativeEngine = require(path.join(enginePath, 'index.js'));
+  if (nativeEngine.isAvailable()) {
+    log.info('Native FEM engine loaded (Eigen SparseLU — full pipeline)');
+  } else {
+    nativeEngineError = nativeEngine.getLoadError();
+    log.warn('Native engine module found but .node binary failed:', nativeEngineError);
+    nativeEngine = null;
+  }
+} catch (e) {
+  nativeEngineError = e.message;
+  log.warn('Native engine not available:', e.message);
+}
+
+ipcMain.handle('native-solver-available', async () => {
+  return {
+    available: nativeEngine !== null && nativeEngine.isAvailable(),
+    error: nativeEngineError,
+  };
+});
+
+ipcMain.handle('native-engine-solve', async (event, input) => {
+  if (!nativeEngine || !nativeEngine.isAvailable()) {
+    return { error: 'Native engine not available' };
+  }
+
+  try {
+    const t0 = Date.now();
+    const result = nativeEngine.solve(input);
+    const elapsed = Date.now() - t0;
+
+    const stats = result.stats;
+    log.info(`[NativeEngine] n=${result.nNodes} nodes, ${result.nElements} elements, ${result.nDof} DOFs, nnz=${result.nnz}`);
+    log.info(`[NativeEngine] Timing: parse=${stats.ms_parse.toFixed(1)}ms, subdiv=${stats.ms_subdiv.toFixed(1)}ms, assembly=${stats.ms_assembly.toFixed(1)}ms, solve=${stats.ms_solve.toFixed(1)}ms, total=${stats.ms_total.toFixed(1)}ms (IPC: ${elapsed}ms)`);
+    log.info(`[NativeEngine] maxUC=${result.maxUC.toFixed(4)}, maxVM=${result.maxVM.toFixed(1)} MPa`);
+
+    return result;
+  } catch (e) {
+    log.error('[NativeEngine] Error:', e.message);
+    return { error: e.message };
+  }
+});
+
 // ─── Custom protocol: serve renderer/out as app:// ──────────
 const RENDERER_OUT_REL = path.join('renderer', 'out');
 

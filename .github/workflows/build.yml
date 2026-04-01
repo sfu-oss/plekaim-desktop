@@ -37,6 +37,12 @@ jobs:
         run: npm install
       - name: Install renderer deps
         run: cd renderer && npm install
+      - name: Setup native solver (Eigen + build)
+        run: |
+          cd native-solver
+          bash setup-eigen.sh
+          npm install
+          npm run build
       - name: Build renderer + fix paths
         run: cd renderer && npm run build && cd .. && node scripts/fix-paths.js
       - name: Build & publish DMG
@@ -58,6 +64,13 @@ jobs:
         run: npm install
       - name: Install renderer deps
         run: cd renderer && npm install
+      - name: Setup native solver (Eigen + build)
+        shell: bash
+        run: |
+          cd native-solver
+          bash setup-eigen.sh
+          npm install
+          npm run build
       - name: Build renderer + fix paths
         run: cd renderer && npm run build && cd .. && node scripts/fix-paths.js
       - name: Build & publish NSIS

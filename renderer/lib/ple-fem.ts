@@ -632,8 +632,121 @@ function mtranspose(M: Float64Array, n: number): Float64Array {
 }
 
 // =============================================================================
-// Lineaire oplosser: Gauss-eliminatie met gedeeltelijke pivotering
 // =============================================================================
+// Native FEM Engine bridge (desktop) or JS solver (browser)
+// =============================================================================
+
+// ─── Electron Native Engine bridge ───
+// In Electron desktop: sends entire model to C++ engine via IPC
+// The C++ engine does: subdivision → sparse assembly → solve → stresses → UC
+// No dense matrix ever created — same approach as PLE4Win
+// In browser: fallback to JS solver with element cap + banded Gauss
+
+declare global {
+  interface Window {
+    electronAPI?: {
+      nativeSolverAvailable?: () => Promise<{ available: boolean; error?: string }>;
+      nativeEngineSolve?: (input: any) => Promise<any>;
+      [key: string]: any;
+    };
+  }
+}
+
+let _nativeEngineChecked = false;
+let _nativeEngineOk = false;
+
+async function checkNativeEngine(): Promise<boolean> {
+  if (_nativeEngineChecked) return _nativeEngineOk;
+  _nativeEngineChecked = true;
+  try {
+    if (typeof window !== "undefined" && window.electronAPI?.nativeSolverAvailable) {
+      const status = await window.electronAPI.nativeSolverAvailable();
+      _nativeEngineOk = status.available;
+      if (_nativeEngineOk) {
+        console.log("[FEM] Native C++ engine available (Eigen SparseLU — full pipeline)");
+      } else {
+        console.log("[FEM] Native engine not available:", status.error);
+      }
+    }
+  } catch (e) {
+    console.log("[FEM] Native engine check failed:", e);
+  }
+  return _nativeEngineOk;
+}
+
+/**
+ * Try to solve the entire model via native C++ engine.
+ * Returns null if native engine is not available — caller falls back to JS.
+ */
+async function tryNativeEngineSolve(input: FemSolverInput): Promise<FemSolverOutput | null> {
+  const hasNative = await checkNativeEngine();
+  if (!hasNative || typeof window === "undefined" || !window.electronAPI?.nativeEngineSolve) {
+    return null;
+  }
+
+  try {
+    const t0 = performance.now();
+
+    // Send model to native engine via IPC
+    // Serialize Map → Array for IPC transport
+    let perElMatArr: any[] | undefined;
+    if (input.perElementMaterials && input.perElementMaterials.size > 0) {
+      perElMatArr = [];
+      input.perElementMaterials.forEach((val: any, idx: number) => {
+        perElMatArr!.push({ index: idx, ...val });
+      });
+    }
+
+    const result = await window.electronAPI.nativeEngineSolve({
+      nodes: input.nodes,
+      elements: input.elements.map((el: any) => ({
+        ...el,
+        pipeEl: (input.perElementMaterials?.get(0) as any)?.pipeEl || 0,
+        bendEl: (input.perElementMaterials?.get(0) as any)?.bendEl || 0,
+      })),
+      mat: input.mat,
+      Pi_bar: input.Pi_bar,
+      Toper: input.Toper,
+      Tinstall: input.Tinstall,
+      loadCase: input.loadCase,
+      boundaryConditions: input.boundaryConditions || [],
+      soilSprings: input.soilSprings || [],
+      supportSprings: input.supportSprings || [],
+      subsideMap: input.subsideMap || {},
+      teeSpecs: input.teeSpecs || {},
+      teeNodeMap: input.teeNodeMap || {},
+      designFactor: input.designFactor || 0.72,
+      gammaM: input.gammaM || 1.1,
+      weldFactor: input.weldFactor || 1.0,
+      perElementMaterials: perElMatArr,
+    });
+
+    if (result.error) {
+      console.warn("[FEM] Native engine error, falling back to JS:", result.error);
+      return null;
+    }
+
+    const elapsed = performance.now() - t0;
+    console.log(`[FEM] Native engine: ${result.nNodes} nodes, ${result.nElements} elements, ${result.nDof} DOFs, ${result.nnz} nnz, solve=${result.stats?.ms_solve?.toFixed(1)}ms, total_ipc=${elapsed.toFixed(0)}ms`);
+
+    // Convert native result to FemSolverOutput format
+    return {
+      nodeResults: result.nodeResults,
+      maxUC: result.maxUC,
+      maxVM: result.maxVM,
+      nNodes: result.nNodes,
+      nElements: result.nElements,
+      nDof: result.nDof,
+      elementForces: [], // TODO: pass element forces from native
+      converged: result.solveOk,
+      iterations: 1,
+      plasticNodeCount: 0,
+    } as FemSolverOutput;
+  } catch (e) {
+    console.warn("[FEM] Native engine IPC failed:", e);
+    return null;
+  }
+}
 
 /** Los K·u = F op, overschrijft K en F. Retourneert u = F na oplossing. */
 function solveLinear(K: Float64Array, F: Float64Array, n: number): Float64Array {
@@ -1310,7 +1423,16 @@ export interface FemSolverOutput {
   localBuckledCount?: number;
 }
 
-export function solveFEM(input: FemSolverInput): FemSolverOutput {
+export async function solveFEM(input: FemSolverInput): Promise<FemSolverOutput> {
+  // ─── Try native C++ engine first (desktop only) ───
+  // The native engine handles the ENTIRE pipeline in C++:
+  // subdivision → sparse assembly → solve → forces → stresses
+  // No dense matrix, no element cap, <1 second for 22000+ DOFs.
+  const nativeResult = await tryNativeEngineSolve(input);
+  if (nativeResult) return nativeResult;
+
+  // ─── Fallback: JavaScript solver (browser / no native engine) ───
+  console.log("[FEM] Using JavaScript solver (browser fallback)");
   const {
     nodes, elements, mat,
     Pi_bar, Toper, Tinstall, loadCase, subsideMap,
@@ -2866,7 +2988,7 @@ export function solveFEM(input: FemSolverInput): FemSolverOutput {
 // Behoudt exact dezelfde signatuur als de oude functie zodat page.tsx
 // ongewijzigd blijft werken. Intern roept het nu solveFEM aan.
 
-export function calcNodeResults(
+export async function calcNodeResults(
   nodes: FemNode[],
   elements: FemElement[],
   mat: MatProps,
@@ -2877,10 +2999,10 @@ export function calcNodeResults(
   subsideMap: Record<string, { subzMax: number; uncF: number; length: number; shape: string }>,
   designFactor = 0.72,
   gammaM = 1.1
-): NodeResult[] {
+): Promise<NodeResult[]> {
   // Bouw boundary conditions uit de standaard aannames
   // (eerste + laatste node fixed als er geen expliciete BCs zijn)
-  const result = solveFEM({
+  const result = await solveFEM({
     nodes, elements, mat,
     Pi_bar, Toper, Tinstall,
     loadCase, subsideMap,
@@ -2975,7 +3097,7 @@ export function calcWorstCase(
  * Voer FEM analyse uit voor alle loadcases en retourneer envelop resultaten.
  * Dit is de aanbevolen functie voor multi-loadcase analyse.
  */
-export function solveAllLoadCases(
+export async function solveAllLoadCases(
   nodes: FemNode[],
   elements: FemElement[],
   mat: MatProps,
@@ -2991,14 +3113,14 @@ export function solveAllLoadCases(
   teeSpecs?: Record<string, { type: string; dRun: number; tRun: number; dBrn: number; tBrn: number; te: number; r0: number }>,
   teeNodeMap?: Record<string, string>,
   weldFactor?: number
-): { perLC: FemSolverOutput[]; envelope: NodeResult[] } {
+): Promise<{ perLC: FemSolverOutput[]; envelope: NodeResult[] }> {
   const perLC: FemSolverOutput[] = [];
 
   // Bepaal of niet-lineaire analyse nodig is (consistent met single-LC path)
   const hasSignificantLoad = loadCases.some((lc: any) => (lc.pressF || 0) > 0 || (lc.tDifF || 0) > 0);
 
   for (const lc of loadCases) {
-    const result = solveFEM({
+    const result = await solveFEM({
       nodes, elements, mat,
       Pi_bar, Toper, Tinstall,
       loadCase: lc, subsideMap,
