@@ -305,21 +305,46 @@ export default function Ple3DViewer({
     const el = mountRef.current;
     if (!el) return;
     const scene = new THREE.Scene();
-    // PLE4Win-stijl: lichtblauwe hemel achtergrond
-    scene.background = new THREE.Color(0x87CEEB);
-    const camera = new THREE.PerspectiveCamera(50, el.clientWidth / el.clientHeight, 0.01, 1000000);
+    // PLE4Win-stijl: gradient hemelachtergrond (licht → blauw)
+    const skyCanvas = document.createElement("canvas");
+    skyCanvas.width = 2; skyCanvas.height = 512;
+    const skyCtx = skyCanvas.getContext("2d")!;
+    const skyGrad = skyCtx.createLinearGradient(0, 0, 0, 512);
+    skyGrad.addColorStop(0.0, "#4a90d9");    // boven: diepblauw
+    skyGrad.addColorStop(0.35, "#7bb8e8");   // midden-boven
+    skyGrad.addColorStop(0.65, "#b8d4ed");   // midden
+    skyGrad.addColorStop(0.85, "#d4e4ef");   // horizon
+    skyGrad.addColorStop(1.0, "#e8eff5");    // onder: bijna wit
+    skyCtx.fillStyle = skyGrad;
+    skyCtx.fillRect(0, 0, 2, 512);
+    const skyTex = new THREE.CanvasTexture(skyCanvas);
+    skyTex.magFilter = THREE.LinearFilter;
+    scene.background = skyTex;
+    scene.fog = new THREE.Fog(0xd4e4ef, 500, 2000); // subtiele verte-mist
+    const camera = new THREE.PerspectiveCamera(45, el.clientWidth / el.clientHeight, 0.01, 1000000);
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, preserveDrawingBuffer: true });
     renderer.setSize(el.clientWidth, el.clientHeight);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.15;
     el.appendChild(renderer.domElement);
-    // PLE4Win-stijl verlichting: helder, realistisch
-    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
-    const dl = new THREE.DirectionalLight(0xffffff, 1.0);
-    dl.position.set(200, 300, 200); dl.castShadow = true; scene.add(dl);
-    const dl2 = new THREE.DirectionalLight(0x8899bb, 0.4);
+    // PLE4Win-stijl verlichting: key/fill/rim setup voor realistische buizen
+    const hemiLight = new THREE.HemisphereLight(0x87CEEB, 0x8B7355, 0.5);
+    scene.add(hemiLight);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.35));
+    const dl = new THREE.DirectionalLight(0xffffff, 1.2);
+    dl.position.set(200, 400, 250); dl.castShadow = true;
+    dl.shadow.mapSize.set(2048, 2048);
+    dl.shadow.camera.near = 0.1; dl.shadow.camera.far = 2000;
+    dl.shadow.camera.left = -100; dl.shadow.camera.right = 100;
+    dl.shadow.camera.top = 100; dl.shadow.camera.bottom = -100;
+    dl.shadow.bias = -0.0005;
+    scene.add(dl);
+    const dl2 = new THREE.DirectionalLight(0x8899bb, 0.35);
     dl2.position.set(-150, 100, -100); scene.add(dl2);
-    const dl3 = new THREE.DirectionalLight(0xffeedd, 0.3);
+    const dl3 = new THREE.DirectionalLight(0xffeedd, 0.25);
     dl3.position.set(0, -50, 200); scene.add(dl3);
     const pg = new THREE.Group();
     scene.add(pg);
@@ -476,9 +501,10 @@ export default function Ple3DViewer({
         }
 
         const pipeMat = new THREE.MeshStandardMaterial({
-          color, metalness: colorMode === "config" ? 0.7 : 0.5,
-          roughness: colorMode === "config" ? 0.25 : 0.2,
-          emissive: new THREE.Color(color).multiplyScalar(colorMode === "config" ? 0.02 : 0.1),
+          color, metalness: colorMode === "config" ? 0.45 : 0.35,
+          roughness: colorMode === "config" ? 0.45 : 0.35,
+          emissive: new THREE.Color(color).multiplyScalar(colorMode === "config" ? 0.03 : 0.08),
+          envMapIntensity: 0.8,
         });
 
         // Bocht of recht
@@ -498,7 +524,7 @@ export default function Ple3DViewer({
             cp = mid.clone().add(bisector.multiplyScalar(-Math.min(len * 0.25, (bR / 1000) * 0.3)));
           }
           const curve = new THREE.CatmullRomCurve3([p1, cp, p2], false, "catmullrom", 0.5);
-          const mesh = new THREE.Mesh(new THREE.TubeGeometry(curve, 32, rCapped, 16, false), pipeMat);
+          const mesh = new THREE.Mesh(new THREE.TubeGeometry(curve, 48, rCapped, 24, false), pipeMat);
           mesh.castShadow = true;
           mesh.userData = { elementIndex: ei, nodeId1: n1.id, nodeId2: n2.id, d: elD, t: elm.t || t, type: elm.type, uc: elUC, R: bR, len: len * 1000 };
           pg.add(mesh);
@@ -508,7 +534,7 @@ export default function Ple3DViewer({
               new THREE.MeshStandardMaterial({ color: 0x2c3e50, transparent: true, opacity: 0.12, side: THREE.DoubleSide })));
           }
         } else {
-          const geo = new THREE.CylinderGeometry(rCapped, rCapped, len, 24, 1);
+          const geo = new THREE.CylinderGeometry(rCapped, rCapped, len, 32, 1);
           const mesh = new THREE.Mesh(geo, pipeMat);
           const mid = new THREE.Vector3().addVectors(p1, p2).multiplyScalar(0.5);
           mesh.position.copy(mid);
@@ -544,7 +570,7 @@ export default function Ple3DViewer({
           const range = (histMax - histMin) || 1;
           const v = Math.max(getNodeValue(r1), getNodeValue(r2));
           const dColor = colorMode === "result" ? getGradientHex((v - histMin) / range) : 0x3498db;
-          const dMat = new THREE.MeshStandardMaterial({ color: dColor, metalness: 0.3, roughness: 0.5, transparent: true, opacity: 0.75, emissive: new THREE.Color(dColor).multiplyScalar(0.15) });
+          const dMat = new THREE.MeshStandardMaterial({ color: dColor, metalness: 0.25, roughness: 0.4, transparent: true, opacity: 0.8, emissive: new THREE.Color(dColor).multiplyScalar(0.12) });
           const dMesh = new THREE.Mesh(new THREE.CylinderGeometry(r, r, dLen, 12), dMat);
           dMesh.position.copy(new THREE.Vector3().addVectors(dp1, dp2).multiplyScalar(0.5));
           dMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dDir.normalize());
@@ -741,35 +767,54 @@ export default function Ple3DViewer({
         });
       }
 
-      // ── Ground Level ribbon (groen, op werkelijke G-LEVEL hoogte) ──
+      // ── Ground Level ribbon (PLE4Win-stijl: semi-transparant groen vlak) ──
       // G-LEVEL is een ABSOLUTE Z-coördinaat (mm, relatief t.o.v. origin)
-      // Net als node.z: in de scene is Y = Z/1000
       if (showGroundLevel && nodes.length > 2) {
+        const glMat = new THREE.MeshStandardMaterial({
+          color: 0x4a7c3f, transparent: true, opacity: 0.22,
+          side: THREE.DoubleSide, roughness: 0.9, metalness: 0.0, depthWrite: false,
+        });
+        const glLineMat = new THREE.LineBasicMaterial({ color: 0x5a9c4f, linewidth: 2 });
         useEls.forEach((elm) => {
           const n1 = nodes[elm.n1]; const n2 = nodes[elm.n2];
           if (!n1 || !n2) return;
           const p1 = getNodePos(n1); const p2 = getNodePos(n2);
-          // G-LEVEL als absolute Y in scene (niet als offset!)
           const glY1 = (coverMap?.[n1.id || ""] ?? 500) / 1000;
           const glY2 = (coverMap?.[n2.id || ""] ?? 500) / 1000;
           const g1 = new THREE.Vector3(p1.x, glY1, p1.z);
           const g2 = new THREE.Vector3(p2.x, glY2, p2.z);
-          const segGeo = new THREE.BufferGeometry().setFromPoints([g1, g2]);
-          pg.add(new THREE.Line(segGeo, new THREE.LineBasicMaterial({ color: 0x2ecc71 })));
+          // Brede ribbon (loodrecht op leidingrichting)
+          const dir = new THREE.Vector3().subVectors(p2, p1).normalize();
+          const up = new THREE.Vector3(0, 1, 0);
+          const perp = new THREE.Vector3().crossVectors(dir, up).normalize();
+          const elDiam = elm.d || D;
+          const ribbonW = Math.max((elDiam / 1000) * scale * 1.5, 0.15);
+          const hw = ribbonW / 2;
+          const v1a = g1.clone().add(perp.clone().multiplyScalar(hw));
+          const v1b = g1.clone().sub(perp.clone().multiplyScalar(hw));
+          const v2a = g2.clone().add(perp.clone().multiplyScalar(hw));
+          const v2b = g2.clone().sub(perp.clone().multiplyScalar(hw));
           const verts = new Float32Array([
-            g1.x, g1.y, g1.z, g2.x, g2.y, g2.z, p1.x, p1.y, p1.z,
-            g2.x, g2.y, g2.z, p2.x, p2.y, p2.z, p1.x, p1.y, p1.z,
+            v1a.x, v1a.y, v1a.z, v2a.x, v2a.y, v2a.z, v1b.x, v1b.y, v1b.z,
+            v2a.x, v2a.y, v2a.z, v2b.x, v2b.y, v2b.z, v1b.x, v1b.y, v1b.z,
           ]);
           const geo = new THREE.BufferGeometry();
           geo.setAttribute("position", new THREE.BufferAttribute(verts, 3));
           geo.computeVertexNormals();
-          pg.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0x2ecc71, transparent: true, opacity: 0.15, side: THREE.DoubleSide })));
+          pg.add(new THREE.Mesh(geo, glMat));
+          // Middellijn
+          const segGeo = new THREE.BufferGeometry().setFromPoints([g1, g2]);
+          pg.add(new THREE.Line(segGeo, glLineMat));
         });
       }
 
-      // ── Water Level ribbon (blauw, op werkelijke W-LEVEL hoogte) ──
-      // W-LEVEL is ook een ABSOLUTE Z-coördinaat (mm, relatief t.o.v. origin)
+      // ── Water Level ribbon (PLE4Win-stijl: semi-transparant blauw vlak) ──
       if (showWaterLevel && nodes.length > 2) {
+        const wlMat = new THREE.MeshStandardMaterial({
+          color: 0x2980b9, transparent: true, opacity: 0.18,
+          side: THREE.DoubleSide, roughness: 0.6, metalness: 0.1, depthWrite: false,
+        });
+        const wlLineMat = new THREE.LineBasicMaterial({ color: 0x3498db, linewidth: 2 });
         useEls.forEach((elm) => {
           const n1 = nodes[elm.n1]; const n2 = nodes[elm.n2];
           if (!n1 || !n2) return;
@@ -778,16 +823,26 @@ export default function Ple3DViewer({
           const wlY2 = (waterMap?.[n2.id || ""] ?? 0) / 1000;
           const w1 = new THREE.Vector3(p1.x, wlY1, p1.z);
           const w2 = new THREE.Vector3(p2.x, wlY2, p2.z);
-          const segGeo = new THREE.BufferGeometry().setFromPoints([w1, w2]);
-          pg.add(new THREE.Line(segGeo, new THREE.LineBasicMaterial({ color: 0x3498db })));
+          const dir = new THREE.Vector3().subVectors(p2, p1).normalize();
+          const up = new THREE.Vector3(0, 1, 0);
+          const perp = new THREE.Vector3().crossVectors(dir, up).normalize();
+          const elDiam = elm.d || D;
+          const ribbonW = Math.max((elDiam / 1000) * scale * 1.2, 0.12);
+          const hw = ribbonW / 2;
+          const v1a = w1.clone().add(perp.clone().multiplyScalar(hw));
+          const v1b = w1.clone().sub(perp.clone().multiplyScalar(hw));
+          const v2a = w2.clone().add(perp.clone().multiplyScalar(hw));
+          const v2b = w2.clone().sub(perp.clone().multiplyScalar(hw));
           const verts = new Float32Array([
-            w1.x, w1.y, w1.z, w2.x, w2.y, w2.z, p1.x, p1.y, p1.z,
-            w2.x, w2.y, w2.z, p2.x, p2.y, p2.z, p1.x, p1.y, p1.z,
+            v1a.x, v1a.y, v1a.z, v2a.x, v2a.y, v2a.z, v1b.x, v1b.y, v1b.z,
+            v2a.x, v2a.y, v2a.z, v2b.x, v2b.y, v2b.z, v1b.x, v1b.y, v1b.z,
           ]);
           const geo = new THREE.BufferGeometry();
           geo.setAttribute("position", new THREE.BufferAttribute(verts, 3));
           geo.computeVertexNormals();
-          pg.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0x3498db, transparent: true, opacity: 0.12, side: THREE.DoubleSide })));
+          pg.add(new THREE.Mesh(geo, wlMat));
+          const segGeo = new THREE.BufferGeometry().setFromPoints([w1, w2]);
+          pg.add(new THREE.Line(segGeo, wlLineMat));
         });
       }
 
@@ -899,10 +954,53 @@ export default function Ple3DViewer({
         const gridH = new THREE.GridHelper(gs, 50, 0x8899aa, 0xaabbcc);
         gridH.position.set(ct.x, box.min.y - 0.5, ct.z); pg.add(gridH);
         const gMesh = new THREE.Mesh(new THREE.PlaneGeometry(gs * 2, gs * 2),
-          new THREE.MeshStandardMaterial({ color: 0x95a5a6, transparent: true, opacity: 0.15, side: THREE.DoubleSide }));
+          new THREE.MeshStandardMaterial({ color: 0x95a5a6, transparent: true, opacity: 0.08, side: THREE.DoubleSide, depthWrite: false }));
         gMesh.rotation.x = -Math.PI / 2; gMesh.position.set(ct.x, box.min.y - 0.3, ct.z); pg.add(gMesh);
       }
-      pg.add(new THREE.AxesHelper(15));
+      // ── PLE4Win-stijl grondvlak met grid ──
+      // Bereken bounding box voor juiste grootte
+      let bbMin = new THREE.Vector3(Infinity, Infinity, Infinity);
+      let bbMax = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
+      nodes.forEach(n => {
+        const p = getNodePos(n);
+        bbMin.min(p); bbMax.max(p);
+      });
+      const bbSize = new THREE.Vector3().subVectors(bbMax, bbMin);
+      const groundSize = Math.max(bbSize.x, bbSize.z, 10) * 2.5;
+      const groundY = bbMin.y - 0.05; // net onder laagste punt
+
+      // Semi-transparant grondvlak
+      const groundGeo = new THREE.PlaneGeometry(groundSize, groundSize);
+      const groundMat = new THREE.MeshStandardMaterial({
+        color: 0xb8c4b8, transparent: true, opacity: 0.35,
+        roughness: 0.95, metalness: 0.0, side: THREE.DoubleSide,
+      });
+      const groundMesh = new THREE.Mesh(groundGeo, groundMat);
+      groundMesh.rotation.x = -Math.PI / 2;
+      groundMesh.position.set(
+        (bbMin.x + bbMax.x) / 2,
+        groundY,
+        (bbMin.z + bbMax.z) / 2
+      );
+      groundMesh.receiveShadow = true;
+      pg.add(groundMesh);
+
+      // Grid op het grondvlak
+      const gridDiv = 20;
+      const gridHelper = new THREE.GridHelper(groundSize, gridDiv, 0x8898a8, 0xa0b0b8);
+      gridHelper.position.set(
+        (bbMin.x + bbMax.x) / 2,
+        groundY + 0.001,
+        (bbMin.z + bbMax.z) / 2
+      );
+      (gridHelper.material as THREE.Material).transparent = true;
+      (gridHelper.material as THREE.Material).opacity = 0.25;
+      pg.add(gridHelper);
+
+      // Kleine assen-indicator (linkonder in de scene)
+      const axH = new THREE.AxesHelper(Math.max(groundSize * 0.04, 1));
+      axH.position.set(bbMin.x - groundSize * 0.05, groundY + 0.01, bbMax.z + groundSize * 0.05);
+      pg.add(axH);
 
       // Camera setup
       if (pts.length && orbitRef.current) {
@@ -933,7 +1031,7 @@ export default function Ple3DViewer({
       }
       return;
     }
-    pg.add(new THREE.AxesHelper(2));
+    pg.add(new THREE.AxesHelper(Math.max(bbSize.x * 0.03, 0.5)));
     pg.add(new THREE.GridHelper(200, 100, 0x8899aa, 0xaabbcc));
   }, [nodes, elements, D, t, pipeScale, colorMode, resultData, showCasing, hideOuter, showDisplaced, deformScale,
       showConstraints, showConnections, showIdents, showNodeNums, showElemNums, showBendIndicators,
