@@ -5,7 +5,7 @@ import PleDataGrid, { PleColumnDef } from "./PleDataGrid";
 import type {
   PleModel, PleNode, PleDiam, PleWall, PleMatl, PleIstrop,
   PleEndpt, PleSupport, PleSpring, PleConnect, PleTeeSpec, PleTeeConf,
-  PleCoating, PleGLevel, PleWLevel, PlePress, PleTemp, PleWeld,
+  PleCoating, PleGLevel, PleWLevel, PleTopload, PleSoilsup, PlePress, PleTemp, PleWeld,
   PleLoadCase, PleSubside, PleAdident, PleSupang,
 } from "../../lib/ple-model";
 import { updateModelTable } from "../../lib/ple-model";
@@ -24,7 +24,7 @@ import { checkLoadcaseNen, NEN3650_STANDARD_FACTORS } from "../../lib/ple-fem";
    - Buisdata: diameters + walls + materials + materialProps (DIAM + WALL + MATL + ISTROP)
    - Grond: gLevels + wLevels (G-LEVEL + W-LEVEL)
    - Randvoorwaarden: endpts + supports + connects + springs (ENDPTS + SUPPORT + CONNECT + ELSPRS)
-   - Belastingen: press + temp + loadCases + subside (PRESS + TEMP + LOCASE + SUBSIDE)
+   - Belastingen: press + temp + loadCases + subside + topLoads + soilSupports (PRESS + TEMP + LOCASE + SUBSIDE + TOPLOAD + SOILSUP)
    - T-stukken: teeSpecs + teeConfs (TEESPEC + TEECONF)
    - Coating: coatings (COATING)
    - Configuratie: adidents (ADIDENT)
@@ -86,6 +86,26 @@ const ISTROP_COLS: PleColumnDef[] = [
   { key: "ReT", label: "ReT", unit: "MPa", type: "number", width: 70 },
   { key: "weight", label: "WEIGHT", unit: "N/mm³", type: "number", width: 90, decimals: 7 },
   { key: "matCat", label: "MATCAT", type: "text", width: 90 },
+];
+
+const TOPLOAD_COLS: PleColumnDef[] = [
+  { key: "tglDbl", label: "TGL_DBL", unit: "mm", type: "number", width: 90, decimals: 1 },
+  { key: "tglTxt", label: "TGL_TXT", type: "text", width: 90 },
+  { key: "topload1", label: "TOPLOAD1", unit: "N/mm²", type: "number", width: 90, decimals: 4 },
+  { key: "loadf1", label: "LOADF1", type: "number", width: 70, decimals: 2 },
+  { key: "topload2", label: "TOPLOAD2", unit: "N/mm²", type: "number", width: 90, decimals: 4 },
+  { key: "loadf2", label: "LOADF2", type: "number", width: 70, decimals: 2 },
+];
+
+const SOILSUP_COLS: PleColumnDef[] = [
+  { key: "tglDbl", label: "TGL_DBL", unit: "mm", type: "number", width: 90, decimals: 1 },
+  { key: "tglTxt", label: "TGL_TXT", type: "text", width: 90 },
+  { key: "hor1", label: "HOR1", unit: "N/mm²", type: "number", width: 85, decimals: 4 },
+  { key: "uncf1", label: "UNCF1", type: "number", width: 70, decimals: 2 },
+  { key: "loadf1", label: "LOADF1", type: "number", width: 70, decimals: 2 },
+  { key: "hor2", label: "HOR2", unit: "N/mm²", type: "number", width: 85, decimals: 4 },
+  { key: "uncf2", label: "UNCF2", type: "number", width: 70, decimals: 2 },
+  { key: "loadf2", label: "LOADF2", type: "number", width: 70, decimals: 2 },
 ];
 
 const PRESS_COLS: PleColumnDef[] = [
@@ -451,6 +471,20 @@ export default function PleEditor({ model, onModelChange, onDataChanged, rawShee
             data={model.subside as any[]}
             onChange={d => setTable("subside", d as PleSubside[])}
             maxHeight={300}
+          />
+          <PleDataGrid
+            title="TOPLOAD — Bovengrondbelasting"
+            subtitle="PLE4Win inputtabel voor topload + load factors"
+            columns={TOPLOAD_COLS}
+            data={model.topLoads as any[]}
+            onChange={d => setTable("topLoads", d as PleTopload[])}
+          />
+          <PleDataGrid
+            title="SOILSUP — Horizontale grondsteun"
+            subtitle="PLE4Win inputtabel voor horizontale soil support pressure"
+            columns={SOILSUP_COLS}
+            data={model.soilSupports as any[]}
+            onChange={d => setTable("soilSupports", d as PleSoilsup[])}
           />
         </>
       )}

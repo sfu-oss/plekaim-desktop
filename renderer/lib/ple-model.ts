@@ -153,6 +153,28 @@ export interface PleWLevel {
   weight: number;   // N/mm³
 }
 
+export interface PleTopload {
+  tglDbl?: number | null;
+  tglInt?: number | null;
+  tglTxt?: string;
+  topload1: number;
+  loadf1: number;
+  topload2: number | null;
+  loadf2: number | null;
+}
+
+export interface PleSoilsup {
+  tglDbl?: number | null;
+  tglInt?: number | null;
+  tglTxt?: string;
+  hor1: number;
+  uncf1: number;
+  loadf1: number;
+  hor2: number | null;
+  uncf2: number | null;
+  loadf2: number | null;
+}
+
 export interface PlePress {
   ident: string;
   press1: number;   // N/mm²
@@ -297,6 +319,8 @@ export interface PleModel {
   coatings: PleCoating[];
   gLevels: PleGLevel[];
   wLevels: PleWLevel[];
+  topLoads: PleTopload[];
+  soilSupports: PleSoilsup[];
   press: PlePress[];
   temp: PleTemp[];
   loadCases: PleLoadCase[];
@@ -588,6 +612,30 @@ export function parseSheetsToModel(sheets: Record<string, any[][]>): PleModel {
     weight: toNum(w.WEIGHT) || 0,
   }));
 
+  // TOPLOAD
+  const topLoads: PleTopload[] = sheetToObjects(sheets.TOPLOAD || []).map(t => ({
+    tglDbl: toNum(t.TGL_DBL) || null,
+    tglInt: toNum(t.TGL_INT) || null,
+    tglTxt: normalizeId(t.TGL_TXT) || undefined,
+    topload1: toNum(t.TOPLOAD1) || 0,
+    loadf1: toNum(t.LOADF1) || 1.35,
+    topload2: toNum(t.TOPLOAD2) || null,
+    loadf2: toNum(t.LOADF2) || null,
+  }));
+
+  // SOILSUP
+  const soilSupports: PleSoilsup[] = sheetToObjects(sheets.SOILSUP || []).map(s => ({
+    tglDbl: toNum(s.TGL_DBL) || null,
+    tglInt: toNum(s.TGL_INT) || null,
+    tglTxt: normalizeId(s.TGL_TXT) || undefined,
+    hor1: toNum(s.HOR1) || 0,
+    uncf1: toNum(s.UNCF1) || 1.0,
+    loadf1: toNum(s.LOADF1) || 1.0,
+    hor2: toNum(s.HOR2) || null,
+    uncf2: toNum(s.UNCF2) || null,
+    loadf2: toNum(s.LOADF2) || null,
+  }));
+
   // PRESS
   const press: PlePress[] = sheetToObjects(sheets.PRESS || []).map(p => ({
     ident: normalizeId(p.Identifier || p.IDENT),
@@ -863,7 +911,7 @@ export function parseSheetsToModel(sheets: Record<string, any[][]>): PleModel {
   const model: PleModel = {
     nodes, diameters, walls, materials, materialProps,
     endpts, supports, springs, connects, teeSpecs, teeConfs,
-    coatings, gLevels, wLevels, press, temp, loadCases,
+    coatings, gLevels, wLevels, topLoads, soilSupports, press, temp, loadCases,
     subside, adidents, supangs, sections, welds,
     origin, geomctl, soilctl,
     _elements: [],
@@ -1273,6 +1321,18 @@ export function modelToRawSheets(model: PleModel): Record<string, any[][]> {
   sheets["W-LEVEL"] = arrayToRaw(
     model.wLevels.map(w => ({ Identifier: w.ident, WATER1: w.water1, UNCV1: w.uncv1, WATER2: w.water2, UNCV2: w.uncv2, WEIGHT: w.weight })),
     [{ key: "Identifier" }, { key: "WATER1", unit: "mm" }, { key: "UNCV1", unit: "mm" }, { key: "WATER2", unit: "mm" }, { key: "UNCV2", unit: "mm" }, { key: "WEIGHT", unit: "N/mm³" }],
+  );
+
+  // TOPLOAD
+  sheets.TOPLOAD = arrayToRaw(
+    model.topLoads.map(t => ({ TGL_DBL: t.tglDbl, TGL_INT: t.tglInt, TGL_TXT: t.tglTxt, TOPLOAD1: t.topload1, LOADF1: t.loadf1, TOPLOAD2: t.topload2, LOADF2: t.loadf2 })),
+    [{ key: "TGL_DBL", unit: "mm" }, { key: "TGL_INT" }, { key: "TGL_TXT" }, { key: "TOPLOAD1", unit: "N/mm²" }, { key: "LOADF1" }, { key: "TOPLOAD2", unit: "N/mm²" }, { key: "LOADF2" }],
+  );
+
+  // SOILSUP
+  sheets.SOILSUP = arrayToRaw(
+    model.soilSupports.map(s => ({ TGL_DBL: s.tglDbl, TGL_INT: s.tglInt, TGL_TXT: s.tglTxt, HOR1: s.hor1, UNCF1: s.uncf1, LOADF1: s.loadf1, HOR2: s.hor2, UNCF2: s.uncf2, LOADF2: s.loadf2 })),
+    [{ key: "TGL_DBL", unit: "mm" }, { key: "TGL_INT" }, { key: "TGL_TXT" }, { key: "HOR1", unit: "N/mm²" }, { key: "UNCF1" }, { key: "LOADF1" }, { key: "HOR2", unit: "N/mm²" }, { key: "UNCF2" }, { key: "LOADF2" }],
   );
 
   // PRESS
