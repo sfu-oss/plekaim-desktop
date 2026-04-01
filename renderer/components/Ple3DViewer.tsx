@@ -1569,29 +1569,6 @@ export default function Ple3DViewer({
         </div>
       )}
 
-      {/* ═══ VIEWCUBE — PLE4Win-stijl navigatiekubus ═══ */}
-      <div style={{
-        position: "absolute", top: 50, right: mob ? 170 : 190, zIndex: 10,
-        width: 70, height: 70, borderRadius: 4,
-        background: "rgba(0,0,0,0.35)", border: "1px solid rgba(255,255,255,0.08)",
-        display: "grid", gridTemplateColumns: "1fr 1fr", gridTemplateRows: "1fr 1fr", gap: 1, padding: 2,
-        cursor: "pointer", overflow: "hidden",
-      }}>
-        {[
-          { l: "FRONT", bg: "rgba(74,127,181,0.8)", th: 0, ph: Math.PI / 2 },
-          { l: "RIGHT", bg: "rgba(90,154,90,0.8)", th: Math.PI / 2, ph: Math.PI / 2 },
-          { l: "TOP", bg: "rgba(181,74,74,0.8)", th: 0, ph: 0.01 },
-          { l: "BACK", bg: "rgba(74,127,181,0.5)", th: Math.PI, ph: Math.PI / 2 },
-        ].map(f => (
-          <div key={f.l} onClick={() => { const o = orbitRef.current; if (o) { o.th = f.th; o.ph = f.ph; animateCamera(o.tgt.clone(), o.rad, 400); } }}
-            style={{
-              background: f.bg, borderRadius: 2, display: "flex", alignItems: "center",
-              justifyContent: "center", fontSize: 7, fontWeight: 700, color: "#fff",
-              fontFamily: F, cursor: "pointer",
-            }}>{f.l}</div>
-        ))}
-      </div>
-
       {/* Material info bottom-right */}
       <div style={{ position: "absolute", bottom: 6, right: mob ? 188 : 228, zIndex: 10, fontSize: 8, color: "#5a6a7a", fontFamily: F, background: "rgba(255,255,255,0.7)", padding: "2px 8px", borderRadius: 4 }}>
         {matName} | Pi={Pi}bar | ΔT={dT}°C | σvm={vm.toFixed(1)}MPa
