@@ -2,10 +2,12 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import Ple3DViewer from "../../components/Ple3DViewer";
+import PleDiagramsComponent from "../../components/PleDiagrams";
 import PlePipeDraw from "./PlePipeDraw";
 import PleEditor from "./PleEditor";
 import PleSoilWizard, { type SoilParameters } from "./PleSoilWizard";
 import { parseSheetsToModel, buildFemInput, modelToLegacy, modelToRawSheets, type PleModel, type SoilWizardResult } from "../../lib/ple-model";
+import { PLE_MATERIALS, getMaterialGroups, findMaterial } from "../../lib/ple-materials";
 import * as XLSX from "xlsx";
 
 // ============================================================
@@ -802,6 +804,107 @@ function parsePLEFile(file: File): Promise<{ nodes: any[], elements: any[], meta
           }
         } catch { /* CSTRMAX niet beschikbaar */ }
 
+        // PLE4Win output: INTFOR (interne krachten per element)
+        try {
+          const intforRows = sheetToObjects(parseSheet("INTFOR"));
+          if (intforRows.length > 0) {
+            meta.outputIntfor = intforRows.map((r: any) => ({
+              elem: (toNum(r.ELEM) || 0) - 1,
+              fAx: toNum(r["F-AX"]) || 0,        // Axiaal [N]
+              fLat: toNum(r["F-LAT"]) || 0,       // Dwarskracht [N]
+              phiLat: toNum(r["PHI-LAT"]) || 0,   // Hoek [°]
+              mTors: toNum(r["M-TORS"]) || 0,     // Torsie [N·mm]
+              mBen: toNum(r["M-BEN"]) || 0,       // Buigmoment [N·mm]
+              phiMb: toNum(r["PHI-MB"]) || 0,     // Hoek [°]
+            })).filter((r: any) => r.elem >= 0);
+          }
+        } catch { /* INTFOR niet beschikbaar */ }
+
+        // PLE4Win output: SOILREA (bodemreacties per element)
+        try {
+          const soilreaRows = sheetToObjects(parseSheet("SOILREA"));
+          if (soilreaRows.length > 0) {
+            meta.outputSoilrea = soilreaRows.map((r: any) => ({
+              elem: (toNum(r.ELEM) || 0) - 1,
+              rAx: toNum(r["R-AX"]) || 0,           // Wrijvingsreactie [N/mm]
+              rLat: toNum(r["R-LAT"]) || 0,          // Laterale reactie [N/mm]
+              phiLat: toNum(r["PHI-LAT"]) || 0,      // Hoek [°]
+              rTors: toNum(r["R-TORS"]) || 0,        // Torsie [N·mm/mm]
+              rAxF: toNum(r["R-AX/F"]) || 0,         // Ratio berekend/max wrijving [%]
+              rLatRP: toNum(r["R-LAT/RP"]) || 0,     // Ratio berekend/max lateraal [%]
+              rTRVT: toNum(r["R-T/RVT"]) || 0,       // Ratio berekend/max topsoil [%]
+            })).filter((r: any) => r.elem >= 0);
+          }
+        } catch { /* SOILREA niet beschikbaar */ }
+
+        // PLE4Win output: BENDFAC (boog SIF-factoren)
+        try {
+          const bfRows = sheetToObjects(parseSheet("BENDFAC"));
+          if (bfRows.length > 0) {
+            meta.outputBendfac = bfRows.map((r: any) => ({
+              from: String(r.FROM || "").trim(),
+              to: String(r.TO || "").trim(),
+              radius: toNum(r.RADIUS) || 0,
+              dout: toNum(r.DOUT) || 0,
+              wall: toNum(r.WALL) || 0,
+              press: toNum(r.PRESS) || 0,
+              klg: toNum(r.KLG) || 0,
+              K: toNum(r.K) || 0,                // Stijfheidsreductiefactor
+              SIX: toNum(r.SIX) || 0,            // Axiale SIF
+              SIF: toNum(r.SIF) || 0,             // Omtrek SIF
+              L1: toNum(r.L1) || 0,               // Tangentlengte
+              Rr: toNum(r["R/r"]) || 0,           // Radius ratio
+            }));
+          }
+        } catch { /* BENDFAC niet beschikbaar */ }
+
+        // PLE4Win output: TEEFAC (T-stuk SIF-factoren)
+        try {
+          const tfRows = sheetToObjects(parseSheet("TEEFAC"));
+          if (tfRows.length > 0) {
+            meta.outputTeefac = tfRows.map((r: any) => ({
+              conname: String(r.CONNAME || "").trim(),
+              type: String(r.TYPE || "").trim(),
+              tUp: toNum(r["T-UP"]) || 0,
+              r2Mp: toNum(r["R2-MP"]) || 0,
+              te: toNum(r.TE) || 0,
+              r0: toNum(r.R0) || 0,
+              H: toNum(r.H) || 0,                 // Flexibility characteristic
+              sixOp: toNum(r["SIX-OP"]) || 0,      // Out-of-plane SIF
+              sixIp: toNum(r["SIX-IP"]) || 0,      // In-plane SIF
+            }));
+          }
+        } catch { /* TEEFAC niet beschikbaar */ }
+
+        // PLE4Win output: SUPREA (ondersteuningsreacties)
+        try {
+          const supreaRows = sheetToObjects(parseSheet("SUPREA"));
+          if (supreaRows.length > 0) {
+            meta.outputSuprea = supreaRows.map((r: any) => ({
+              node: toNum(r.NODE) || 0,
+              sx: toNum(r["S-X"]) || 0,  sy: toNum(r["S-Y"]) || 0,  sz: toNum(r["S-Z"]) || 0,
+              msx: toNum(r["MS-X"]) || 0, msy: toNum(r["MS-Y"]) || 0, msz: toNum(r["MS-Z"]) || 0,
+              sAx: toNum(r["S-AX"]) || 0, sLat: toNum(r["S-LAT"]) || 0,
+            }));
+          }
+        } catch { /* SUPREA niet beschikbaar */ }
+
+        // PLE4Win output: PIPEDIM (buisafmetingen per element)
+        try {
+          const pdRows = sheetToObjects(parseSheet("PIPEDIM"));
+          if (pdRows.length > 0) {
+            meta.outputPipedim = pdRows.map((r: any) => ({
+              elem: (toNum(r.ELEM) || 0) - 1,
+              dout: toNum(r.DOUT) || 0,
+              tNom: toNum(r["T-NOM"]) || 0,
+              tMin: toNum(r["T-MIN"]) || 0,
+              radius: toNum(r.RADIUS) || 0,
+              bendpar: toNum(r.BENDPAR) || 0,
+              deadw: toNum(r.DEADW) || 0,
+            })).filter((r: any) => r.elem >= 0);
+          }
+        } catch { /* PIPEDIM niet beschikbaar */ }
+
         // GEOMCTL: geometrisch niet-lineaire instellingen (optioneel)
         try {
           const geomctlData = sheetToObjects(parseSheet("GEOMCTL"));
@@ -1287,7 +1390,7 @@ function PLECalculator() {
     const api = (window as any).electronAPI; if (api?.importsList) { api.importsList().then((d: any) => setSavedImports(d?.items || [])).catch(() => {}); }
   }, []);
 
-  const [matName, setMatName] = useState("API 5L X52");
+  const [matName, setMatName] = useState("P235GH");
   const [D, setD] = useState(323.9);
   const [t, setT] = useState(8.0);
   const [L, setL] = useState(1000);
@@ -1625,6 +1728,13 @@ function PLECalculator() {
   const R = useMemo(() => {
     // Gebruik ISTROP data uit Excel als beschikbaar, anders fallback naar hardcoded MATERIALS
     let m = MATERIALS[matName as keyof typeof MATERIALS] as any;
+    // Fallback: zoek in PLE_MATERIALS database (65 PLE4Win staalsoorten)
+    if (!m) {
+      const pleMat = findMaterial(matName);
+      if (pleMat) {
+        m = { E: pleMat.E, SMYS: pleMat.Re, poisson: pleMat.nu, alpha: pleMat.alpha, density: (pleMat.weight || 7.7e-5) * 1e9 / 9.81, type: "steel" };
+      }
+    }
     if (!m) return null;
     if (importedMeta?.matProps) {
       // Override met ISTROP data uit het geïmporteerde Excel bestand
@@ -1770,7 +1880,60 @@ function PLECalculator() {
   const tabInput = (
     <div style={grid2}>
       <Section icon="🔧" title="Leiding & Materiaal" sub="Buisgeometrie en materiaalkeuze">
-        <Select label="Materiaal" value={matName} onChange={setMatName} options={Object.keys(MATERIALS)} />
+        <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+          <label style={{ fontSize: 11, fontWeight: 500, color: css.muted, fontFamily: css.mono }}>Materiaal</label>
+          <select value={matName} onChange={e => setMatName(e.target.value)}
+            style={{
+              background: css.bg, border: `1px solid ${css.border}`, borderRadius: 8,
+              padding: "10px 12px", color: css.text, fontSize: 13, fontFamily: css.mono,
+              outline: "none", width: "100%", boxSizing: "border-box",
+              WebkitAppearance: "none", MozAppearance: "none",
+              backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E")`,
+              backgroundRepeat: "no-repeat", backgroundPosition: "right 12px center",
+              paddingRight: 36,
+            }}>
+            <optgroup label="── EN 10216/10217 (Warmtenet) ──">
+              {PLE_MATERIALS.filter(m => m.group === "EN 10216/10217").map(m => (
+                <option key={m.matRef} value={m.matRef}>{m.matRef} — Re={m.Re} MPa</option>
+              ))}
+            </optgroup>
+            <optgroup label="── NEN-EN-ISO 3183 PSL 2 ──">
+              {PLE_MATERIALS.filter(m => m.group === "NEN-EN-ISO 3183 PSL 2").map(m => (
+                <option key={m.matRef} value={m.matRef}>{m.matRef} — Re={m.Re} MPa</option>
+              ))}
+            </optgroup>
+            <optgroup label="── NEN-EN-ISO 3183 PSL 1 ──">
+              {PLE_MATERIALS.filter(m => m.group === "NEN-EN-ISO 3183 PSL 1").map(m => (
+                <option key={m.matRef} value={m.matRef}>{m.matRef} — Re={m.Re} MPa</option>
+              ))}
+            </optgroup>
+            <optgroup label="── NEN-EN-ISO 3183 Annex M ──">
+              {PLE_MATERIALS.filter(m => m.group === "NEN-EN-ISO 3183 Annex M").map(m => (
+                <option key={m.matRef} value={m.matRef}>{m.matRef} — Re={m.Re} MPa</option>
+              ))}
+            </optgroup>
+            <optgroup label="── Duplex / RVS ──">
+              {PLE_MATERIALS.filter(m => m.group === "Duplex / RVS").map(m => (
+                <option key={m.matRef} value={m.matRef}>{m.matRef} — Re={m.Re} MPa</option>
+              ))}
+            </optgroup>
+            <optgroup label="── ASTM ──">
+              {PLE_MATERIALS.filter(m => m.group === "ASTM").map(m => (
+                <option key={m.matRef} value={m.matRef}>{m.matRef} — Re={m.Re} MPa</option>
+              ))}
+            </optgroup>
+            <optgroup label="── Overig (kunststof, gietijzer) ──">
+              {Object.keys(MATERIALS).filter(k => !findMaterial(k)).map(k => (
+                <option key={k} value={k}>{k}</option>
+              ))}
+            </optgroup>
+          </select>
+          {findMaterial(matName) && (
+            <div style={{ fontSize: 9, color: css.dim, fontFamily: css.mono, marginTop: 2 }}>
+              {findMaterial(matName)!.description}
+            </div>
+          )}
+        </div>
         <div style={{ ...grid2i, marginTop: 10 }}>
           <Input label="Buitendiameter" unit="mm" value={D} onChange={setD} />
           <Input label="Wanddikte" unit="mm" value={t} onChange={setT} />
@@ -1891,6 +2054,79 @@ function PLECalculator() {
           <Row label="Ringvervorming" value={ov.delta} unit="mm" />
           <Row label="Implosiedruk" value={Pcr} unit="MPa" />
         </Section>
+        {/* ── KaimPLE vs PLE4Win vergelijking ── */}
+        {femResults.length > 0 && importedMeta?.outputElementResults && importedMeta.outputElementResults.length > 0 && (
+          <div style={{ marginTop: 24 }}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: css.accent, marginBottom: 8 }}>
+              KaimPLE vs PLE4Win — Resultaatvergelijking
+            </div>
+            <div style={{ fontSize: 10, color: css.dim, marginBottom: 12, fontFamily: css.mono }}>
+              Vergelijking van berekende spanningen: KaimPLE FEM solver vs geïmporteerde PLE4Win CSTRMAX output
+            </div>
+
+            {(() => {
+              // Bereken max UC/VM/SH per methode
+              const kaim = femResults.reduce((worst: any, r: any) => r.uc > (worst?.uc || 0) ? r : worst, femResults[0]);
+              const pleResults = importedMeta.outputElementResults;
+              const pleMaxVM = Math.max(...pleResults.map((r: any) => r.vm || 0));
+              const pleMaxSH = Math.max(...pleResults.map((r: any) => Math.abs(r.sh || 0)));
+              const pleMaxUC_ring = n.sha > 0 ? pleMaxSH / n.sha : 0;
+              const pleMaxUC_vm = n.vma > 0 ? pleMaxVM / n.vma : 0;
+              const pleMaxUC = Math.max(pleMaxUC_ring, pleMaxUC_vm);
+              const kaimMaxVM = Math.max(...femResults.map((r: any) => r.vm || 0));
+              const kaimMaxSH = Math.max(...femResults.map((r: any) => Math.abs(r.sh || 0)));
+              const kaimMaxUC = Math.max(...femResults.map((r: any) => r.uc || 0));
+
+              const rows = [
+                { label: "Max σvm (Von Mises)", kaim: kaimMaxVM, ple: pleMaxVM, unit: "MPa" },
+                { label: "Max |σh| (Ringspanning)", kaim: kaimMaxSH, ple: pleMaxSH, unit: "MPa" },
+                { label: "Max UC (Unity Check)", kaim: kaimMaxUC, ple: pleMaxUC, unit: "" },
+                { label: "Maatgevend knooppunt", kaim: kaim?.nodeId || "-", ple: `elem ${(pleResults.reduce((w: any, r: any) => (r.vm || 0) > (w.vm || 0) ? r : w, pleResults[0])?.elementIndex || 0) + 1}`, unit: "" },
+              ];
+
+              return (
+                <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: css.mono, fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ borderBottom: `2px solid ${css.border}` }}>
+                      <th style={{ padding: "6px 10px", textAlign: "left", color: css.muted, fontWeight: 400 }}>Parameter</th>
+                      <th style={{ padding: "6px 10px", textAlign: "right", color: css.accent, fontWeight: 600 }}>KaimPLE</th>
+                      <th style={{ padding: "6px 10px", textAlign: "right", color: "#e67e22", fontWeight: 600 }}>PLE4Win</th>
+                      <th style={{ padding: "6px 10px", textAlign: "right", color: css.dim, fontWeight: 400 }}>Δ (%)</th>
+                      <th style={{ padding: "6px 10px", textAlign: "right", color: css.dim, fontWeight: 400 }}>Eenheid</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((r, i) => {
+                      const isNum = typeof r.kaim === "number" && typeof r.ple === "number";
+                      const delta = isNum && (r.ple as number) > 0.001 ? (((r.kaim as number) - (r.ple as number)) / (r.ple as number) * 100) : null;
+                      const deltaColor = delta !== null ? (Math.abs(delta) < 5 ? css.green : Math.abs(delta) < 15 ? css.yellow : css.red) : css.dim;
+                      return (
+                        <tr key={i} style={{ borderBottom: `1px solid ${css.border}22` }}>
+                          <td style={{ padding: "5px 10px", color: css.text }}>{r.label}</td>
+                          <td style={{ padding: "5px 10px", textAlign: "right", color: css.accent, fontWeight: 600 }}>
+                            {isNum ? (r.kaim as number).toFixed(r.unit === "" ? 3 : 1) : r.kaim}
+                          </td>
+                          <td style={{ padding: "5px 10px", textAlign: "right", color: "#e67e22", fontWeight: 600 }}>
+                            {isNum ? (r.ple as number).toFixed(r.unit === "" ? 3 : 1) : r.ple}
+                          </td>
+                          <td style={{ padding: "5px 10px", textAlign: "right", color: deltaColor, fontSize: 11 }}>
+                            {delta !== null ? `${delta > 0 ? "+" : ""}${delta.toFixed(1)}%` : "-"}
+                          </td>
+                          <td style={{ padding: "5px 10px", textAlign: "right", color: css.dim }}>{r.unit}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              );
+            })()}
+            <div style={{ fontSize: 9, color: css.dim, marginTop: 8, fontFamily: css.mono }}>
+              Δ &lt; 5% = <span style={{ color: css.green }}>●</span> goed |
+              Δ 5-15% = <span style={{ color: css.yellow }}>●</span> acceptabel |
+              Δ &gt; 15% = <span style={{ color: css.red }}>●</span> nader onderzoeken
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -2313,6 +2549,81 @@ function PLECalculator() {
                   </tr>
                 );
               })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* PLE4Win BENDFAC referentie (geïmporteerd) */}
+      {importedMeta?.outputBendfac && importedMeta.outputBendfac.length > 0 && (
+        <div style={{ marginTop: 16 }}>
+          <div style={{ fontSize: 13, fontWeight: 500, color: css.accent, marginBottom: 8, fontFamily: css.mono }}>
+            PLE4Win BENDFAC — Boog SIF-factoren (referentie)
+          </div>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: css.mono, fontSize: 10 }}>
+              <thead>
+                <tr style={{ borderBottom: `1px solid ${css.border}` }}>
+                  {["Van", "Naar", "Dout", "Wand", "R (mm)", "R/r", "K (flex)", "SIX (ax)", "SIF (circ)", "P (MPa)", "KLG"].map(h => (
+                    <th key={h} style={{ padding: "3px 5px", textAlign: "right", color: css.muted, fontWeight: 400, fontSize: 9, whiteSpace: "nowrap" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {importedMeta.outputBendfac.slice(0, 50).map((bf: any, i: number) => (
+                  <tr key={i} style={{ borderBottom: `1px solid ${css.border}11` }}>
+                    <td style={{ padding: "2px 5px", color: css.muted, fontSize: 9 }}>{bf.from}</td>
+                    <td style={{ padding: "2px 5px", color: css.muted, fontSize: 9 }}>{bf.to}</td>
+                    <td style={{ padding: "2px 5px", textAlign: "right" }}>{bf.dout.toFixed(1)}</td>
+                    <td style={{ padding: "2px 5px", textAlign: "right" }}>{bf.wall.toFixed(1)}</td>
+                    <td style={{ padding: "2px 5px", textAlign: "right" }}>{bf.radius.toFixed(0)}</td>
+                    <td style={{ padding: "2px 5px", textAlign: "right" }}>{bf.Rr.toFixed(2)}</td>
+                    <td style={{ padding: "2px 5px", textAlign: "right", color: bf.K > 5 ? css.yellow : css.text }}>{bf.K.toFixed(3)}</td>
+                    <td style={{ padding: "2px 5px", textAlign: "right", color: bf.SIX > 2 ? css.red : bf.SIX > 1.5 ? css.yellow : css.text }}>{bf.SIX.toFixed(3)}</td>
+                    <td style={{ padding: "2px 5px", textAlign: "right", color: bf.SIF > 2 ? css.red : bf.SIF > 1.5 ? css.yellow : css.text }}>{bf.SIF.toFixed(3)}</td>
+                    <td style={{ padding: "2px 5px", textAlign: "right" }}>{bf.press.toFixed(2)}</td>
+                    <td style={{ padding: "2px 5px", textAlign: "right" }}>{bf.klg.toFixed(1)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {importedMeta.outputBendfac.length > 50 && (
+              <div style={{ fontSize: 9, color: css.dim, marginTop: 4 }}>
+                ... en {importedMeta.outputBendfac.length - 50} meer bochten
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* PLE4Win TEEFAC referentie */}
+      {importedMeta?.outputTeefac && importedMeta.outputTeefac.length > 0 && (
+        <div style={{ marginTop: 16 }}>
+          <div style={{ fontSize: 13, fontWeight: 500, color: css.accent, marginBottom: 8, fontFamily: css.mono }}>
+            PLE4Win TEEFAC — T-stuk SIF-factoren (referentie)
+          </div>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: css.mono, fontSize: 11 }}>
+            <thead>
+              <tr style={{ borderBottom: `1px solid ${css.border}` }}>
+                {["Verbinding", "Type", "T-UP", "R2-MP", "TE", "R0", "H", "SIX-OP", "SIX-IP"].map(h => (
+                  <th key={h} style={{ padding: "4px 6px", textAlign: "right", color: css.muted, fontWeight: 400, fontSize: 10 }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {importedMeta.outputTeefac.map((tf: any, i: number) => (
+                <tr key={i} style={{ borderBottom: `1px solid ${css.border}22` }}>
+                  <td style={{ padding: "3px 6px", color: css.green }}>{tf.conname}</td>
+                  <td style={{ padding: "3px 6px", color: css.text }}>{tf.type}</td>
+                  <td style={{ padding: "3px 6px", textAlign: "right" }}>{tf.tUp.toFixed(1)}</td>
+                  <td style={{ padding: "3px 6px", textAlign: "right" }}>{tf.r2Mp.toFixed(1)}</td>
+                  <td style={{ padding: "3px 6px", textAlign: "right" }}>{tf.te.toFixed(1)}</td>
+                  <td style={{ padding: "3px 6px", textAlign: "right" }}>{tf.r0.toFixed(1)}</td>
+                  <td style={{ padding: "3px 6px", textAlign: "right" }}>{tf.H.toFixed(4)}</td>
+                  <td style={{ padding: "3px 6px", textAlign: "right", color: tf.sixOp > 2 ? css.red : tf.sixOp > 1.5 ? css.yellow : css.text }}>{tf.sixOp.toFixed(3)}</td>
+                  <td style={{ padding: "3px 6px", textAlign: "right", color: tf.sixIp > 2 ? css.red : tf.sixIp > 1.5 ? css.yellow : css.text }}>{tf.sixIp.toFixed(3)}</td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
@@ -3440,8 +3751,26 @@ function PLECalculator() {
             );
           })()}
         </Section>
+
+        {/* ── PLE4Win output diagrammen (INTFOR/SOILREA/CSTRMAX/DISPLAC) ── */}
+        {(importedMeta?.outputIntfor || importedMeta?.outputSoilrea || importedMeta?.outputElementResults || importedMeta?.outputDisplacements) && (
+          <div style={{ marginTop: 16 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: css.accent, marginBottom: 6, fontFamily: css.mono }}>
+              PLE4Win Resultaten (geïmporteerd)
+            </div>
+            <PleDiagramsComponent
+              nodes={importedNodes}
+              elements={importedEls}
+              intfor={importedMeta?.outputIntfor}
+              soilrea={importedMeta?.outputSoilrea}
+              cstrmax={importedMeta?.outputElementResults}
+              displac={importedMeta?.outputDisplacements}
+              css={css}
+            />
+          </div>
+        )}
       </div>
-    );
+  );
   })();
 
   // ---- TAB: TEKENING (PipeDraw) ----

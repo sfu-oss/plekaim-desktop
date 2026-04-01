@@ -468,3 +468,101 @@ for (const soil of ALL_SOIL_TYPES) {
     E_soil: soil.E_soil,
   };
 }
+
+// ============================================================
+// PLE4Win x0_Layer Reference Data
+// ============================================================
+// Exact data uit PLE4Win v4.9.0 Ple4Win.tpa database (x0_Layer tabel).
+// Deze waarden zijn de officiële PLE4Win bodemparameters.
+//
+// Eenheden PLE4Win intern (N/mm systeem):
+//   gamma, gamma_sat : N/mm³ (×1e6 = kN/m³)
+//   c'               : N/mm² (×1e3 = kPa)
+//   cu               : N/mm² (×1e3 = kPa)
+//   G, E, E_trench   : N/mm² (= MPa)
+//   kvmin            : N/mm³
+//   phi, delta       : graden
+//   fm, mu, mu_compr : dimensieloos
+
+export interface Ple4WinSoilLayer {
+  layerId: number;
+  name: string;             // PLE4Win layer_name
+  layerType: number;        // 1=sand, 2=clay, 3=peat, 4=gravel, 5=loam
+  layerSubtype: number;     // PLE4Win subtype
+  // In kN/m³ (geconverteerd van PLE4Win N/mm³)
+  gamma: number;
+  gamma_sat: number;
+  // Graden
+  phi: number;
+  delta: number;
+  // In kPa (geconverteerd van PLE4Win N/mm²)
+  c_prime: number;          // c' (effectieve cohesie)
+  cu: number;               // ongedraineerde schuifsterkte
+  // Dimensieloos
+  fm: number;               // wrijvingsfactor
+  mu: number;               // Poisson-achtige ratio
+  mu_compr: number;         // compressiefactor
+  // In N/mm³ (PLE4Win origineel)
+  kvmin: number;
+  // In MPa (= N/mm²)
+  G: number;                // schuifmodulus
+  E: number;                // elasticiteitsmodulus
+  UF: number;               // onbelastefactor
+}
+
+export const PLE4WIN_SOIL_LAYERS: Ple4WinSoilLayer[] = [
+  // ── Zand (Sand) ──
+  { layerId: 1,  name: "Sand; clean; loose",          layerType: 1, layerSubtype: 1,  gamma: 17.0, gamma_sat: 19.0, phi: 30,    delta: 20,   c_prime: 0,     cu: 0,      fm: 0.3, mu: 0.075, mu_compr: 0.02, kvmin: 2.4,  G: 5.8,   E: 15,    UF: 6.5 },
+  { layerId: 2,  name: "Sand; clean; moderate",        layerType: 1, layerSubtype: 1,  gamma: 18.0, gamma_sat: 20.0, phi: 32.5,  delta: 20,   c_prime: 0,     cu: 0,      fm: 0.3, mu: 0.075, mu_compr: 0.02, kvmin: 2.4,  G: 16.7,  E: 45,    UF: 4.0 },
+  { layerId: 3,  name: "Sand; clean; firm",            layerType: 1, layerSubtype: 1,  gamma: 19.5, gamma_sat: 21.5, phi: 37.5,  delta: 20,   c_prime: 0,     cu: 0,      fm: 0.3, mu: 0.075, mu_compr: 0.02, kvmin: 5.5,  G: 32.1,  E: 92.5,  UF: 2.0 },
+  { layerId: 4,  name: "Sand; slightly silty/clayey",  layerType: 1, layerSubtype: 2,  gamma: 18.5, gamma_sat: 20.5, phi: 29.75, delta: 20,   c_prime: 0,     cu: 0,      fm: 0.3, mu: 0.075, mu_compr: 0.02, kvmin: 2.4,  G: 16.2,  E: 42,    UF: 4.0 },
+  { layerId: 5,  name: "Sand; highly silty/clayey",    layerType: 1, layerSubtype: 3,  gamma: 18.5, gamma_sat: 20.5, phi: 27.5,  delta: 20,   c_prime: 0,     cu: 0,      fm: 0.3, mu: 0.075, mu_compr: 0.02, kvmin: 2.4,  G: 8.7,   E: 22.5,  UF: 4.0 },
+  // ── Klei (Clay) ──
+  { layerId: 6,  name: "Clay; clean; weak",            layerType: 2, layerSubtype: -1, gamma: 14.0, gamma_sat: 14.0, phi: 17.5,  delta: 11.7, c_prime: 0,     cu: 25,     fm: 0.3, mu: 0.2,   mu_compr: 0.10, kvmin: 0.4,  G: 0.31,  E: 1,     UF: 8.0 },
+  { layerId: 7,  name: "Clay; clean; moderate",        layerType: 2, layerSubtype: -1, gamma: 17.0, gamma_sat: 17.0, phi: 17.5,  delta: 11.7, c_prime: 5,     cu: 50,     fm: 0.3, mu: 0.175, mu_compr: 0.088,kvmin: 0.6,  G: 0.72,  E: 2,     UF: 5.0 },
+  { layerId: 8,  name: "Clay; clean; firm",            layerType: 2, layerSubtype: -1, gamma: 19.5, gamma_sat: 19.5, phi: 21.25, delta: 14.3, c_prime: 14,    cu: 150,    fm: 0.3, mu: 0.15,  mu_compr: 0.075,kvmin: 0.8,  G: 2.38,  E: 7,     UF: 3.0 },
+  { layerId: 9,  name: "Clay; slightly sandy; weak",   layerType: 2, layerSubtype: -1, gamma: 15.0, gamma_sat: 15.0, phi: 22.5,  delta: 15,   c_prime: 0,     cu: 40,     fm: 0.3, mu: 0.2,   mu_compr: 0.10, kvmin: 0.4,  G: 0.52,  E: 1.5,   UF: 8.0 },
+  { layerId: 10, name: "Clay; slightly sandy; moderate",layerType: 2, layerSubtype: -1, gamma: 18.0, gamma_sat: 18.0, phi: 22.5,  delta: 15,   c_prime: 5,     cu: 80,     fm: 0.3, mu: 0.175, mu_compr: 0.088,kvmin: 0.6,  G: 1.03,  E: 3,     UF: 5.0 },
+  { layerId: 11, name: "Clay; slightly sandy; firm",   layerType: 2, layerSubtype: -1, gamma: 20.5, gamma_sat: 20.5, phi: 25,    delta: 16.7, c_prime: 14,    cu: 145,    fm: 0.3, mu: 0.15,  mu_compr: 0.075,kvmin: 0.8,  G: 2.59,  E: 7.5,   UF: 3.0 },
+  { layerId: 13, name: "Clay; highly sandy",           layerType: 2, layerSubtype: -1, gamma: 19.0, gamma_sat: 19.0, phi: 30,    delta: 20,   c_prime: 0.5,   cu: 5,      fm: 0.3, mu: 0.1,   mu_compr: 0.04, kvmin: 1.5,  G: 1.38,  E: 3.5,   UF: 5.0 },
+  { layerId: 14, name: "Clay; organic; weak",          layerType: 2, layerSubtype: -1, gamma: 13.0, gamma_sat: 13.0, phi: 15,    delta: 10,   c_prime: 0.5,   cu: 10,     fm: 0.3, mu: 0.2,   mu_compr: 0.10, kvmin: 0.4,  G: 0.21,  E: 0.5,   UF: 8.0 },
+  { layerId: 15, name: "Clay; organic; moderate",      layerType: 2, layerSubtype: -1, gamma: 15.5, gamma_sat: 15.5, phi: 15,    delta: 10,   c_prime: 0.5,   cu: 27.5,   fm: 0.3, mu: 0.175, mu_compr: 0.088,kvmin: 0.6,  G: 0.52,  E: 1.5,   UF: 5.0 },
+  // ── Veen (Peat) ──
+  { layerId: 16, name: "Peat; not preloaded; weak",    layerType: 3, layerSubtype: -1, gamma: 11.0, gamma_sat: 11.0, phi: 15,    delta: 0,    c_prime: 1.75,  cu: 15,     fm: 0.3, mu: 0.2,   mu_compr: 0.10, kvmin: 0.4,  G: 0.12,  E: 0.35,  UF: 12.5},
+  { layerId: 17, name: "Peat; moderately preloaded; moderate", layerType: 3, layerSubtype: -1, gamma: 12.5, gamma_sat: 12.5, phi: 15, delta: 0, c_prime: 3.75, cu: 25,   fm: 0.3, mu: 0.2,   mu_compr: 0.10, kvmin: 0.4,  G: 0.25,  E: 0.75,  UF: 8.0 },
+  // ── Leem (Loam) ──
+  { layerId: 18, name: "Loam; slightly sandy; weak",   layerType: 5, layerSubtype: -1, gamma: 19.0, gamma_sat: 19.0, phi: 28.75, delta: 20,   c_prime: 0,     cu: 50,     fm: 0.3, mu: 0.11,  mu_compr: 0.05, kvmin: 1.6,  G: 0.78,  E: 2,     UF: 6.5 },
+  { layerId: 19, name: "Loam; slightly sandy; moderate",layerType: 5, layerSubtype: -1, gamma: 20.0, gamma_sat: 20.0, phi: 30,    delta: 20,   c_prime: 1,     cu: 100,    fm: 0.3, mu: 0.11,  mu_compr: 0.05, kvmin: 1.6,  G: 1.11,  E: 3,     UF: 4.0 },
+  { layerId: 20, name: "Loam; slightly sandy; firm",   layerType: 5, layerSubtype: -1, gamma: 21.5, gamma_sat: 21.5, phi: 31.25, delta: 20,   c_prime: 3.15,  cu: 250,    fm: 0.3, mu: 0.11,  mu_compr: 0.05, kvmin: 1.6,  G: 2.22,  E: 6,     UF: 2.0 },
+  { layerId: 21, name: "Loam; highly sandy",           layerType: 5, layerSubtype: -1, gamma: 19.5, gamma_sat: 19.5, phi: 31.25, delta: 20,   c_prime: 0.5,   cu: 75,     fm: 0.3, mu: 0.11,  mu_compr: 0.05, kvmin: 1.6,  G: 1.44,  E: 4,     UF: 4.0 },
+  // ── Grind (Gravel) ──
+  { layerId: 22, name: "Gravel; slightly silty; loose", layerType: 4, layerSubtype: -1, gamma: 17.0, gamma_sat: 19.0, phi: 32.5,  delta: 20,   c_prime: 0,     cu: 0,      fm: 0.3, mu: 0,     mu_compr: 0,    kvmin: 2.4,  G: 16.7,  E: 45,    UF: 6.5 },
+  { layerId: 23, name: "Gravel; slightly silty; moderate",layerType: 4, layerSubtype: -1,gamma: 18.0, gamma_sat: 20.0, phi: 35,    delta: 20,   c_prime: 0,     cu: 0,      fm: 0.3, mu: 0,     mu_compr: 0,    kvmin: 2.4,  G: 27.8,  E: 75,    UF: 4.0 },
+  { layerId: 24, name: "Gravel; slightly silty; firm",  layerType: 4, layerSubtype: -1, gamma: 19.5, gamma_sat: 21.5, phi: 38.75, delta: 20,   c_prime: 0,     cu: 0,      fm: 0.3, mu: 0,     mu_compr: 0,    kvmin: 5.5,  G: 36.1,  E: 97.5,  UF: 2.0 },
+  { layerId: 25, name: "Gravel; highly silty; loose",   layerType: 4, layerSubtype: -1, gamma: 18.0, gamma_sat: 20.0, phi: 30,    delta: 20,   c_prime: 0,     cu: 0,      fm: 0.3, mu: 0,     mu_compr: 0,    kvmin: 2.4,  G: 11.1,  E: 30,    UF: 6.5 },
+  { layerId: 26, name: "Gravel; highly silty; moderate",layerType: 4, layerSubtype: -1, gamma: 19.0, gamma_sat: 21.0, phi: 32.5,  delta: 20,   c_prime: 0,     cu: 0,      fm: 0.3, mu: 0,     mu_compr: 0,    kvmin: 2.4,  G: 16.7,  E: 45,    UF: 4.0 },
+  { layerId: 27, name: "Gravel; highly silty; firm",    layerType: 4, layerSubtype: -1, gamma: 20.5, gamma_sat: 22.25,phi: 37.5,  delta: 20,   c_prime: 0,     cu: 0,      fm: 0.3, mu: 0,     mu_compr: 0,    kvmin: 5.5,  G: 34.26, E: 92.5,  UF: 2.0 },
+];
+
+/** Zoek PLE4Win soil layer op naam (case-insensitive partial match). */
+export function findPle4WinLayer(name: string): Ple4WinSoilLayer | undefined {
+  const key = name.toLowerCase();
+  return PLE4WIN_SOIL_LAYERS.find(l => l.name.toLowerCase().includes(key));
+}
+
+/** Zoek PLE4Win soil layer op ID. */
+export function getPle4WinLayerById(id: number): Ple4WinSoilLayer | undefined {
+  return PLE4WIN_SOIL_LAYERS.find(l => l.layerId === id);
+}
+
+/** Mapping PLE4Win layerType → KaimPLE mainType. */
+export function ple4winLayerTypeToMainType(layerType: number): SoilMainType {
+  switch (layerType) {
+    case 1: return "sand";
+    case 2: return "clay";
+    case 3: return "peat";
+    case 4: return "gravel";
+    case 5: return "loam";
+    default: return "sand";
+  }
+}

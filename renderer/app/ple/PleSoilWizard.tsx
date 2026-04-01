@@ -1,5 +1,6 @@
 "use client";
 import React, { useMemo, useState, useCallback } from "react";
+import { PLE4WIN_SOIL_LAYERS, type Ple4WinSoilLayer } from "../../lib/soil-types";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    PLE SOIL MODEL WIZARD — NEN 3650-1:2020 Grondmechanische parameterberekening
@@ -944,6 +945,29 @@ export default function PleSoilWizard({ nodes, elements, glevel = [], onApplySoi
             {/* Detail view */}
             {selectedSoilType && (() => {
               const st = soilTypes.find(s => s.id === selectedSoilType)!;
+              // Find closest PLE4Win soil layer match
+              const ple4winMatch = PLE4WIN_SOIL_LAYERS.find(p => {
+                const nameLC = p.name.toLowerCase();
+                const stLC = st.name.toLowerCase();
+                // Match on main type + density
+                if (st.mainType === "sand" && nameLC.includes("sand")) {
+                  if (stLC.includes("dense") || stLC.includes("firm")) return nameLC.includes("firm");
+                  if (stLC.includes("moderate")) return nameLC.includes("moderate");
+                  if (stLC.includes("loose")) return nameLC.includes("loose");
+                }
+                if (st.mainType === "clay" && nameLC.includes("clay")) {
+                  if (stLC.includes("firm") || stLC.includes("stiff")) return nameLC.includes("firm");
+                  if (stLC.includes("moderate")) return nameLC.includes("moderate");
+                  if (stLC.includes("soft") || stLC.includes("weak")) return nameLC.includes("weak");
+                }
+                if (st.mainType === "peat" && nameLC.includes("peat")) return true;
+                if (st.mainType === "loam" && nameLC.includes("loam")) return true;
+                if (st.mainType === "gravel" && nameLC.includes("gravel")) return true;
+                return false;
+              }) || PLE4WIN_SOIL_LAYERS.find(p => {
+                // Fallback: match on phi value
+                return Math.abs(p.phi - st.phi) < 3;
+              });
               return (
                 <div style={{
                   marginTop: 12, padding: 10, background: "rgba(30,41,59,0.4)",
@@ -966,6 +990,26 @@ export default function PleSoilWizard({ nodes, elements, glevel = [], onApplySoi
                     <span style={{ color: css.muted }}>G = {st.G} kN/m²</span>
                     <span style={{ color: css.muted }}>u_f = {st.uFriction} mm</span>
                   </div>
+                  {/* PLE4Win referentie */}
+                  {ple4winMatch && (
+                    <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${css.border}` }}>
+                      <div style={{ fontSize: 9, fontWeight: 600, color: "#e67e22", marginBottom: 4 }}>
+                        PLE4Win referentie: {ple4winMatch.name}
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "3px 12px", fontSize: 8, fontFamily: css.mono }}>
+                        <span style={{ color: "#e67e22" }}>γ = {ple4winMatch.gamma} kN/m³</span>
+                        <span style={{ color: "#e67e22" }}>γ_sat = {ple4winMatch.gamma_sat} kN/m³</span>
+                        <span style={{ color: "#e67e22" }}>φ = {ple4winMatch.phi}°</span>
+                        <span style={{ color: "#e67e22" }}>δ = {ple4winMatch.delta}°</span>
+                        <span style={{ color: "#e67e22" }}>c' = {ple4winMatch.c_prime} kPa</span>
+                        <span style={{ color: "#e67e22" }}>cu = {ple4winMatch.cu} kPa</span>
+                        <span style={{ color: "#e67e22" }}>kvmin = {ple4winMatch.kvmin}</span>
+                        <span style={{ color: "#e67e22" }}>E = {ple4winMatch.E} MPa</span>
+                        <span style={{ color: "#e67e22" }}>G = {ple4winMatch.G} MPa</span>
+                        <span style={{ color: "#e67e22" }}>mu = {ple4winMatch.mu}</span>
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })()}

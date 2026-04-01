@@ -108,6 +108,62 @@ function getGradientColor(t: number): THREE.Color {
 
 function getGradientHex(t: number): number { return getGradientColor(t).getHex(); }
 
+/** Apply per-vertex contour colors to a CylinderGeometry for smooth gradient along pipe axis.
+ *  v1, v2: normalized values [0..1] at node1 (bottom) and node2 (top) of the cylinder.
+ *  CylinderGeometry must have heightSegments > 1 for smooth interpolation. */
+function applyContourColors(geo: THREE.CylinderGeometry, v1: number, v2: number): void {
+  const pos = geo.getAttribute("position");
+  const count = pos.count;
+  const colors = new Float32Array(count * 3);
+  // CylinderGeometry: Y goes from -height/2 (bottom=node1) to +height/2 (top=node2)
+  // Find Y range
+  let minY = Infinity, maxY = -Infinity;
+  for (let i = 0; i < count; i++) {
+    const y = pos.getY(i);
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+  }
+  const yRange = maxY - minY || 1;
+  for (let i = 0; i < count; i++) {
+    const y = pos.getY(i);
+    const t = (y - minY) / yRange; // 0=bottom(node1), 1=top(node2)
+    const val = v1 + (v2 - v1) * t;
+    const c = getGradientColor(val);
+    colors[i * 3] = c.r;
+    colors[i * 3 + 1] = c.g;
+    colors[i * 3 + 2] = c.b;
+  }
+  geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+}
+
+/** Apply per-vertex contour colors to a TubeGeometry for smooth gradient along curve. */
+function applyContourColorsToTube(geo: THREE.TubeGeometry, v1: number, v2: number): void {
+  const pos = geo.getAttribute("position");
+  const count = pos.count;
+  const colors = new Float32Array(count * 3);
+  // TubeGeometry: vertices are arranged in rings along the curve
+  // Approximate progress along curve by distance from first vertex
+  const p0 = new THREE.Vector3(pos.getX(0), pos.getY(0), pos.getZ(0));
+  let maxDist = 0;
+  const dists: number[] = [];
+  for (let i = 0; i < count; i++) {
+    const d = Math.sqrt(
+      (pos.getX(i) - p0.x) ** 2 + (pos.getY(i) - p0.y) ** 2 + (pos.getZ(i) - p0.z) ** 2
+    );
+    dists.push(d);
+    if (d > maxDist) maxDist = d;
+  }
+  for (let i = 0; i < count; i++) {
+    const t = maxDist > 0 ? dists[i] / maxDist : 0;
+    const val = v1 + (v2 - v1) * t;
+    const c = getGradientColor(val);
+    colors[i * 3] = c.r;
+    colors[i * 3 + 1] = c.g;
+    colors[i * 3 + 2] = c.b;
+  }
+  geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+}
+
 // ── CSS constanten ──
 const F = "'JetBrains Mono','Fira Code','Courier New',monospace";
 const panelBg = "rgba(10,14,26,0.95)";
@@ -500,11 +556,21 @@ export default function Ple3DViewer({
           }
         }
 
+        // Normalized contour values for per-vertex coloring
+        const range = (histMax - histMin) || 1;
+        const nr1c = nodeResultMap.get(n1.id || "");
+        const nr2c = nodeResultMap.get(n2.id || "");
+        const nv1 = colorMode === "result" ? (getNodeValue(nr1c) - histMin) / range : 0;
+        const nv2 = colorMode === "result" ? (getNodeValue(nr2c) - histMin) / range : 0;
+        const useContour = colorMode === "result" && Math.abs(nv1 - nv2) > 0.001;
+
         const pipeMat = new THREE.MeshStandardMaterial({
-          color, metalness: colorMode === "config" ? 0.45 : 0.35,
+          color: useContour ? 0xffffff : color,
+          metalness: colorMode === "config" ? 0.45 : 0.35,
           roughness: colorMode === "config" ? 0.45 : 0.35,
           emissive: new THREE.Color(color).multiplyScalar(colorMode === "config" ? 0.03 : 0.08),
           envMapIntensity: 0.8,
+          vertexColors: useContour,
         });
 
         // Bocht of recht
@@ -524,7 +590,9 @@ export default function Ple3DViewer({
             cp = mid.clone().add(bisector.multiplyScalar(-Math.min(len * 0.25, (bR / 1000) * 0.3)));
           }
           const curve = new THREE.CatmullRomCurve3([p1, cp, p2], false, "catmullrom", 0.5);
-          const mesh = new THREE.Mesh(new THREE.TubeGeometry(curve, 48, rCapped, 24, false), pipeMat);
+          const tubeGeo = new THREE.TubeGeometry(curve, 48, rCapped, 24, false);
+          if (useContour) applyContourColorsToTube(tubeGeo, nv1, nv2);
+          const mesh = new THREE.Mesh(tubeGeo, pipeMat);
           mesh.castShadow = true;
           mesh.userData = { elementIndex: ei, nodeId1: n1.id, nodeId2: n2.id, d: elD, t: elm.t || t, type: elm.type, uc: elUC, R: bR, len: len * 1000 };
           pg.add(mesh);
@@ -534,7 +602,9 @@ export default function Ple3DViewer({
               new THREE.MeshStandardMaterial({ color: 0x2c3e50, transparent: true, opacity: 0.12, side: THREE.DoubleSide })));
           }
         } else {
-          const geo = new THREE.CylinderGeometry(rCapped, rCapped, len, 32, 1);
+          const hSegs = useContour ? 8 : 1; // More segments for smooth gradient
+          const geo = new THREE.CylinderGeometry(rCapped, rCapped, len, 32, hSegs);
+          if (useContour) applyContourColors(geo, nv1, nv2);
           const mesh = new THREE.Mesh(geo, pipeMat);
           const mid = new THREE.Vector3().addVectors(p1, p2).multiplyScalar(0.5);
           mesh.position.copy(mid);
@@ -1031,6 +1101,7 @@ export default function Ple3DViewer({
       }
       return;
     }
+    pg.add(new THREE.AxesHelper(0.5));
     pg.add(new THREE.GridHelper(200, 100, 0x8899aa, 0xaabbcc));
   }, [nodes, elements, D, t, pipeScale, colorMode, resultData, showCasing, hideOuter, showDisplaced, deformScale,
       showConstraints, showConnections, showIdents, showNodeNums, showElemNums, showBendIndicators,
