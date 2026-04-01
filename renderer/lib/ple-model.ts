@@ -25,6 +25,14 @@ export interface PleNode {
   x: number;          // mm (RD, origin afgetrokken)
   y: number;
   z: number;
+  dxN?: number | null;
+  dyN?: number | null;
+  dzN?: number | null;
+  bendEl?: number | null;
+  pipeEl?: number | null;
+  ext?: number | null;
+  nKink?: number | null;
+  lSegm?: number | null;
   bendR: number | null;
   etyp: string;       // "BEND" | "" | etc
   D0: number | null;   // buitendiameter (uit POLYDIF)
@@ -361,6 +369,7 @@ export interface PleModel {
 
   // Bewaar originele units rij voor S1 node reconstructie
   _polydifUnitsRow: any[] | null;
+  _polydifHeader: string[] | null;
 }
 
 // ============================================================
@@ -380,6 +389,16 @@ const toNum = (v: any): number => {
 };
 
 const normalizeId = (id: any): string => (id || "").toString().trim();
+
+const getNum = (obj: Record<string, any>, keys: string[]): number | null => {
+  for (const k of keys) {
+    if (obj && Object.prototype.hasOwnProperty.call(obj, k)) {
+      const v = obj[k];
+      if (v !== null && v !== undefined && v !== "") return toNum(v);
+    }
+  }
+  return null;
+};
 
 function sheetToObjects(rows: any[][]): Record<string, any>[] {
   if (!rows?.length) return [];
@@ -422,6 +441,7 @@ export function parseSheetsToModel(sheets: Record<string, any[][]>): PleModel {
   // Kolom 17 = IDENT, 18 = X-N, 19 = Y-N, 20 = Z-N (standaard)
   // Sommige modellen hebben een kolom-offset → probeer ook kolom 18 als IDENT
   const polydifRaw = sheets.POLYDIF || [];
+  const polydifHeader = (polydifRaw[0] || []).map((x: any) => (x || "").toString().trim());
   const unitsRow = (polydifRaw[1] as any[]) || null;
   if (unitsRow) {
     // Zoek de S1 ident: probeer kolom 17, 18 (voor offset-varianten)
@@ -474,6 +494,14 @@ export function parseSheetsToModel(sheets: Record<string, any[][]>): PleModel {
       x: xN - origin.x,
       y: yN - origin.y,
       z: zN - origin.z,
+      dxN: getNum(p, ["d(X-N)", "D(X-N)", "DX-N", "dX-N"]) ?? null,
+      dyN: getNum(p, ["d(Y-N)", "D(Y-N)", "DY-N", "dY-N"]) ?? null,
+      dzN: getNum(p, ["d(Z-N)", "D(Z-N)", "DZ-N", "dZ-N"]) ?? null,
+      bendEl: getNum(p, ["BEND_EL", "BEND-EL", "BEND EL"]) ?? null,
+      pipeEl: getNum(p, ["PIPE_EL", "PIPE-EL", "PIPE EL"]) ?? null,
+      ext: getNum(p, ["EXT"]) ?? null,
+      nKink: getNum(p, ["N-KINK", "N KINK", "NKINK"]) ?? null,
+      lSegm: getNum(p, ["L-SEGM", "L SEGM", "LSEGM"]) ?? null,
       bendR: toNum(p.BENDRAD) || null,
       etyp: (p.ETYP || p.BEND_EL || p.PIPE_EL || "").toString(),
       D0: toNum(p.D0) || null,
@@ -929,6 +957,7 @@ export function parseSheetsToModel(sheets: Record<string, any[][]>): PleModel {
     _globalWater: globalWater,
     _matProps: matProps,
     _polydifUnitsRow: unitsRow,
+    _polydifHeader: polydifHeader.length > 0 ? polydifHeader : null,
   };
 
   // Importeer GENSOIL resultaten als die bestaan
@@ -1224,23 +1253,39 @@ export function modelToRawSheets(model: PleModel): Record<string, any[][]> {
   ];
 
   // POLYDIF — bewaar S1 node in units-rij
-  const polydifHeader = [" ", "Rij", "Status", "d(X-N)", "d(Y-N)", "d(Z-N)", "BEND_EL", "PIPE_EL",
-    "INTSL", "INTSH", "INT_GRP", "INTGRSPC", "RTYP", "BENDRAD", "LTYP",
+  const defaultPolydifHeader = [" ", "Rij", "Status", "d(X-N)", "d(Y-N)", "d(Z-N)", "BEND_EL", "PIPE_EL",
+    "EXT", "N-KINK", "L-SEGM", "INTSL", "INTSH", "INT_GRP", "INTGRSPC", "RTYP", "BENDRAD", "LTYP",
     "ETYP", "INSTYP", "IDENT", "X-N", "Y-N", "Z-N", "AX-L", "CUM-L", "D0", "DPE"];
+  const polydifHeader = (model._polydifHeader && model._polydifHeader.length > 0)
+    ? model._polydifHeader
+    : defaultPolydifHeader;
   const polydifUnits = model._polydifUnitsRow || [" "];
+  const idx = (name: string) => polydifHeader.findIndex(h => h === name);
   // Data rijen: skip S1 (die zit in units-rij) als _polydifUnitsRow beschikbaar is
   const startIdx = model._polydifUnitsRow ? 1 : 0;
   const polydifData: any[][] = model.nodes.slice(startIdx).map((n, i) => {
-    const row: any[] = new Array(25).fill(null);
-    row[0] = i + 1;
-    row[13] = n.bendR;
-    row[15] = n.etyp;
-    row[17] = n.id;
-    row[18] = n.x + model.origin.x;
-    row[19] = n.y + model.origin.y;
-    row[20] = n.z + model.origin.z;
-    row[23] = n.D0;
-    row[24] = n.DPE;
+    const row: any[] = new Array(polydifHeader.length).fill(null);
+    const set = (key: string, value: any) => {
+      const iKey = idx(key);
+      if (iKey >= 0) row[iKey] = value;
+    };
+    set("Rij", i + 1);
+    set("d(X-N)", n.dxN);
+    set("d(Y-N)", n.dyN);
+    set("d(Z-N)", n.dzN);
+    set("BEND_EL", n.bendEl);
+    set("PIPE_EL", n.pipeEl);
+    set("EXT", n.ext);
+    set("N-KINK", n.nKink);
+    set("L-SEGM", n.lSegm);
+    set("BENDRAD", n.bendR);
+    set("ETYP", n.etyp);
+    set("IDENT", n.id);
+    set("X-N", n.x + model.origin.x);
+    set("Y-N", n.y + model.origin.y);
+    set("Z-N", n.z + model.origin.z);
+    set("D0", n.D0);
+    set("DPE", n.DPE);
     return row;
   });
   sheets.POLYDIF = [polydifHeader, polydifUnits, ...polydifData];

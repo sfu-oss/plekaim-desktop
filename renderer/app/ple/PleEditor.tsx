@@ -46,8 +46,16 @@ const NODE_COLS: PleColumnDef[] = [
   { key: "x", label: "X", unit: "mm", type: "number", width: 90, decimals: 1 },
   { key: "y", label: "Y", unit: "mm", type: "number", width: 90, decimals: 1 },
   { key: "z", label: "Z", unit: "mm", type: "number", width: 80, decimals: 1 },
-  { key: "bendR", label: "Bend R", unit: "mm", type: "number", width: 80 },
-  { key: "etyp", label: "Type", type: "text", width: 70 },
+  { key: "dxN", label: "d(X-N)", unit: "mm", type: "number", width: 90, decimals: 1 },
+  { key: "dyN", label: "d(Y-N)", unit: "mm", type: "number", width: 90, decimals: 1 },
+  { key: "dzN", label: "d(Z-N)", unit: "mm", type: "number", width: 90, decimals: 1 },
+  { key: "bendR", label: "BENDRAD", unit: "mm", type: "number", width: 80 },
+  { key: "bendEl", label: "BEND_EL", type: "number", width: 80, decimals: 0 },
+  { key: "pipeEl", label: "PIPE_EL", type: "number", width: 80, decimals: 0 },
+  { key: "ext", label: "EXT", type: "number", width: 70, decimals: 0 },
+  { key: "nKink", label: "N-KINK", type: "number", width: 80, decimals: 0 },
+  { key: "lSegm", label: "L-SEGM", type: "number", width: 80, decimals: 0 },
+  { key: "etyp", label: "ETYP", type: "text", width: 70 },
 ];
 
 const DIAM_COLS: PleColumnDef[] = [
