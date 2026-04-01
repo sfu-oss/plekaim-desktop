@@ -5,8 +5,8 @@
       "sources": ["engine.cpp"],
       "include_dirs": [
         "<!@(node -p \"require('node-addon-api').include\")",
-        "deps/eigen",
-        "deps/eigen/Eigen"
+        "<(module_root_dir)/deps/eigen",
+        "<(module_root_dir)/deps/eigen/Eigen"
       ],
       "defines": [
         "NAPI_VERSION=8",
