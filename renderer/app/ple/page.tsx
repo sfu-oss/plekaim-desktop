@@ -788,6 +788,20 @@ function parsePLEFile(file: File): Promise<{ nodes: any[], elements: any[], meta
           }
         } catch { /* DISPLAC niet beschikbaar */ }
 
+        // PLE4Win output: CSTRMAX (element max stress) → 3D kleurlaag
+        try {
+          const cstrRows = sheetToObjects(parseSheet("CSTRMAX"));
+          if (cstrRows.length > 0) {
+            meta.outputElementResults = cstrRows
+              .map((r: any) => ({
+                elementIndex: (toNum(r.ELEM) || 0) - 1,
+                vm: toNum(r["MISES-M"] ?? r.MISES) || 0,
+                sh: toNum(r["SHOOP-M"] ?? r.SHOOP) || 0,
+              }))
+              .filter((r: any) => r.elementIndex >= 0);
+          }
+        } catch { /* CSTRMAX niet beschikbaar */ }
+
         // GEOMCTL: geometrisch niet-lineaire instellingen (optioneel)
         try {
           const geomctlData = sheetToObjects(parseSheet("GEOMCTL"));
@@ -1801,7 +1815,7 @@ function PLECalculator() {
         <Badge pass={n.vp} label="VM" unity={n.vu} compact={mobile} />
         <Badge pass={n.ok} label="Totaal" unity={n.cu} compact={mobile} />
       </div>
-      <Ple3DViewer D={D} t={t} matName={matName} Pi={Pi} dT={dT} sh={s.sh} vm={s.vm} unity={n.cu} nodes={importedNodes} elements={importedEls} endpoints={importedMeta?.endptsMap} connects={importedMeta?.connects || []} supports={importedMeta?.supportList || []} tees={importedMeta?.teeSpecData} SMYS={m.SMYS} femResults={femResults} pleDisplacements={importedMeta?.outputDisplacements} coverMap={importedMeta?.coverMap} waterMap={importedMeta?.waterMap} soilWizardResults={soilWizardResults} />
+      <Ple3DViewer D={D} t={t} matName={matName} Pi={Pi} dT={dT} sh={s.sh} vm={s.vm} unity={n.cu} nodes={importedNodes} elements={importedEls} endpoints={importedMeta?.endptsMap} connects={importedMeta?.connects || []} supports={importedMeta?.supportList || []} tees={importedMeta?.teeSpecData} SMYS={m.SMYS} femResults={femResults} pleDisplacements={importedMeta?.outputDisplacements} pleElementResults={importedMeta?.outputElementResults} coverMap={importedMeta?.coverMap} waterMap={importedMeta?.waterMap} soilWizardResults={soilWizardResults} />
     </div>
   );
 

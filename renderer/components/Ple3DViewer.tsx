@@ -43,6 +43,12 @@ type PleDisplacement = {
   nodeId: string;
   ux: number; uy: number; uz: number;
 };
+
+type PleElementResult = {
+  elementIndex: number; // 0-based
+  vm?: number;          // Von Mises (MISES-M)
+  sh?: number;          // hoop (SHOOP-M)
+};
 type SoilWizardData = {
   nodeId: string; nodeIndex: number;
   KLH: number; KLS: number; KLT: number;
@@ -60,6 +66,7 @@ type Props = {
   SMYS?: number;
   femResults?: FemNodeResult[];
   pleDisplacements?: PleDisplacement[];
+  pleElementResults?: PleElementResult[];
   coverMap?: Record<string, number>;
   waterMap?: Record<string, number>;
   soilWizardResults?: SoilWizardData[];
@@ -123,7 +130,7 @@ function Chk({ checked, onChange, label, color }: { checked: boolean; onChange: 
 export default function Ple3DViewer({
   D, t, matName, Pi, dT, sh, vm, unity,
   nodes, elements, endpoints, connects, supports, tees, SMYS = 235,
-  femResults, pleDisplacements, coverMap, waterMap, soilWizardResults,
+  femResults, pleDisplacements, pleElementResults, coverMap, waterMap, soilWizardResults,
 }: Props) {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -186,6 +193,12 @@ export default function Ple3DViewer({
   }, [femResults, pleDisplacements]);
 
   const teeIdSet = useMemo(() => new Set(connects?.map(c => c.id1) || []), [connects]);
+  const elementResultMap = useMemo(() => {
+    if (!pleElementResults || pleElementResults.length === 0) return null;
+    const m = new Map<number, PleElementResult>();
+    pleElementResults.forEach(r => { if (r.elementIndex >= 0) m.set(r.elementIndex, r); });
+    return m;
+  }, [pleElementResults]);
   const endpointIdSet = useMemo(() => new Set(Object.keys(endpoints || {})), [endpoints]);
   const supportIdSet = useMemo(() => new Set(supports?.map((s: any) => s.refIdent || s.id) || []), [supports]);
 
@@ -257,15 +270,33 @@ export default function Ple3DViewer({
     }
   }, [resultData]);
 
+  const getElementValue = useCallback((er: PleElementResult | undefined): number => {
+    if (!er) return 0;
+    if (resultData === "vm") return er.vm || 0;
+    if (resultData === "sh") return er.sh || 0;
+    if (resultData === "uc") {
+      const sh = er.sh || 0;
+      const vm = er.vm || 0;
+      const sha = 0.72 * SMYS;
+      const vma = 0.85 * SMYS / 1.1;
+      const ucRing = sha > 0 ? Math.abs(sh) / sha : 0;
+      const ucVM = vma > 0 ? vm / vma : 0;
+      return Math.max(ucRing, ucVM);
+    }
+    return 0;
+  }, [resultData, SMYS]);
+
   // ── Berekend: min/max van resultaten ──
   const { minVal, maxVal } = useMemo(() => {
     let mn = Infinity, mx = 0;
     if (femResults && femResults.length > 0) {
       femResults.forEach(r => { const v = getNodeValue(r); if (v < mn) mn = v; if (v > mx) mx = v; });
+    } else if (pleElementResults && pleElementResults.length > 0) {
+      pleElementResults.forEach(r => { const v = getElementValue(r); if (v < mn) mn = v; if (v > mx) mx = v; });
     }
     if (!Number.isFinite(mn) || mn === mx) { mn = 0; mx = 1; }
     return { minVal: mn, maxVal: mx };
-  }, [femResults, getNodeValue]);
+  }, [femResults, pleElementResults, getNodeValue, getElementValue]);
 
   useEffect(() => { setHistMin(minVal); setHistMax(maxVal); }, [minVal, maxVal]);
 
@@ -422,13 +453,26 @@ export default function Ple3DViewer({
           // PLE4Win config: lichtgrijs metallic
           color = 0xaab0b8;
         } else {
-          const nr1 = nodeResultMap.get(n1.id || "");
-          const nr2 = nodeResultMap.get(n2.id || "");
-          elUC = Math.max(nr1?.uc || 0, nr2?.uc || 0);
-          const v1 = getNodeValue(nr1); const v2 = getNodeValue(nr2);
-          const elVal = Math.max(v1, v2);
-          const range = (histMax - histMin) || 1;
-          color = getGradientHex((elVal - histMin) / range);
+          const er = elementResultMap?.get(ei);
+          if (er) {
+            const elVal = getElementValue(er);
+            const sh = er.sh || 0; const vm = er.vm || 0;
+            const sha = 0.72 * SMYS;
+            const vma = 0.85 * SMYS / 1.1;
+            const ucRing = sha > 0 ? Math.abs(sh) / sha : 0;
+            const ucVM = vma > 0 ? vm / vma : 0;
+            elUC = Math.max(ucRing, ucVM);
+            const range = (histMax - histMin) || 1;
+            color = getGradientHex((elVal - histMin) / range);
+          } else {
+            const nr1 = nodeResultMap.get(n1.id || "");
+            const nr2 = nodeResultMap.get(n2.id || "");
+            elUC = Math.max(nr1?.uc || 0, nr2?.uc || 0);
+            const v1 = getNodeValue(nr1); const v2 = getNodeValue(nr2);
+            const elVal = Math.max(v1, v2);
+            const range = (histMax - histMin) || 1;
+            color = getGradientHex((elVal - histMin) / range);
+          }
         }
 
         const pipeMat = new THREE.MeshStandardMaterial({
@@ -894,7 +938,7 @@ export default function Ple3DViewer({
   }, [nodes, elements, D, t, pipeScale, colorMode, resultData, showCasing, hideOuter, showDisplaced, deformScale,
       showConstraints, showConnections, showIdents, showNodeNums, showElemNums, showBendIndicators,
       showGroundLevel, showWaterLevel, showPolygonPts, showElasticElements, showSoilZones,
-      unity, teeIdSet, endpointIdSet, supportIdSet, endpoints, femResults, dispFallback, histMin, histMax, getNodeValue, coverMap, waterMap, soilWizardResults, soilWizMap]);
+      unity, teeIdSet, endpointIdSet, supportIdSet, endpoints, femResults, dispFallback, elementResultMap, histMin, histMax, getNodeValue, getElementValue, coverMap, waterMap, soilWizardResults, soilWizMap]);
 
   // ── View presets ──
   const setView = (v: string) => {
