@@ -1031,7 +1031,6 @@ export default function Ple3DViewer({
       }
       return;
     }
-    pg.add(new THREE.AxesHelper(Math.max(bbSize.x * 0.03, 0.5)));
     pg.add(new THREE.GridHelper(200, 100, 0x8899aa, 0xaabbcc));
   }, [nodes, elements, D, t, pipeScale, colorMode, resultData, showCasing, hideOuter, showDisplaced, deformScale,
       showConstraints, showConnections, showIdents, showNodeNums, showElemNums, showBendIndicators,
