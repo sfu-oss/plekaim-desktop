@@ -1041,7 +1041,8 @@ export function calcSubsideMoment(
 function buildLocalK(
   E: number, G: number, A: number,
   Iy: number, Iz: number, J: number,
-  L: number, flexFactor = 1.0
+  L: number, flexFactor = 1.0,
+  nu = 0.3  // Poisson ratio — nodig voor plane strain correctie
 ): Float64Array {
   const K = zeros(12);
   const n = 12;
@@ -1050,12 +1051,21 @@ function buildLocalK(
   const Iy_eff = Iy * flexFactor;
   const Iz_eff = Iz * flexFactor;
 
+  // ─── Plane strain correctie (PLE4Win-matching) ───
+  // Dunwandige buizen onder buiging: de circumferentiële rek wordt beperkt
+  // door Poisson-effect, waardoor de effectieve buigstijfheid toeneemt met
+  // factor 1/(1 - ν²). Dit is consistent met shell theory (Flügge/Timoshenko)
+  // en is bevestigd door PLE4Win Fortran decompilatie (PleFunction6.dll).
+  // Voor ν = 0.3: factor = 1/(1 - 0.09) = 1.0989 → ~10% stijver.
+  const planeStrainFactor = 1.0 / (1.0 - nu * nu);
+
   const EA_L = E * A / L;
   const GJ_L = G * J / L;
   const L2 = L * L;
   const L3 = L * L * L;
 
   // Axiale stijfheid: DOF 0 (ux1) en DOF 6 (ux2)
+  // Axiale stijfheid ZONDER plane strain correctie (axiaal = membraan, geen Poisson-effect)
   mset(K, n, 0, 0, EA_L);
   mset(K, n, 0, 6, -EA_L);
   mset(K, n, 6, 0, -EA_L);
@@ -1063,7 +1073,8 @@ function buildLocalK(
 
   // Buiging in xz-vlak (uy, rz):
   // DOF 1 (uy1), 5 (rz1), 7 (uy2), 11 (rz2)
-  const EIz = E * Iz_eff;
+  // Buigstijfheid MET plane strain correctie: E*I/(1-ν²)
+  const EIz = E * Iz_eff * planeStrainFactor;
   const a1 = 12 * EIz / L3;
   const a2 = 6 * EIz / L2;
   const a3 = 4 * EIz / L;
@@ -1076,7 +1087,7 @@ function buildLocalK(
 
   // Buiging in xy-vlak (uz, ry):
   // DOF 2 (uz1), 4 (ry1), 8 (uz2), 10 (ry2)
-  const EIy = E * Iy_eff;
+  const EIy = E * Iy_eff * planeStrainFactor;
   const b1 = 12 * EIy / L3;
   const b2 = 6 * EIy / L2;
   const b3 = 4 * EIy / L;
@@ -1301,12 +1312,19 @@ export function solveFEM(input: FemSolverInput): FemSolverOutput {
 
   // =====================================================
   // Pre-processing: Automatische element-opsplitsing (PLE4Win-stijl)
-  // Lange elementen worden opgesplitst in sub-elementen zodat:
-  // 1. Eigengewicht correct verdeeld wordt over meerdere grondveren
-  // 2. De FEM nauwkeurigheid gewaarborgd is
-  // Max elementlengte ≈ 5000 mm (PLE4Win gebruikt ~5D als richtlijn)
+  // PLE4Win verdeelt elementen via PIPE_EL (typisch 125-200mm voor rechte stukken)
+  // en BEND_EL (typisch 62.5mm voor bochten).
+  //
+  // In een browser-solver is dat te fijn (3744 elementen → O(n³) te traag).
+  // Compromis: cap op ~1500 totale elementen (≈ 9000 DOF → haalbaar in JS).
+  // 
+  // Per element: nSub = ceil(L / targetLen) met:
+  //   - targetLen = min(pipeEl * 5, 1000) voor normale buizen
+  //   - targetLen = min(pipeEl * 3, 500) voor bochten
+  //   - targetLen = 2000 voor HDD/elastische segmenten (> 20m)
+  //   - Globaal maximum: 2000mm
   // =====================================================
-  const maxElLength = 5000; // mm — maximale elementlengte
+  const DEFAULT_MAX_EL = 1000; // mm — standaard maximale elementlengte
 
   // Werk op kopieën zodat het origineel behouden blijft
   const workNodes: FemNode[] = [...nodes.map(n => ({ ...n }))];
@@ -1330,7 +1348,24 @@ export function solveFEM(input: FemSolverInput): FemSolverOutput {
     const dx = n2.x - n1.x, dy = n2.y - n1.y, dz = (n2.z || 0) - (n1.z || 0);
     const L = Math.sqrt(dx * dx + dy * dy + dz * dz);
 
-    const nSub = L > maxElLength ? Math.ceil(L / maxElLength) : 1;
+    // Bepaal target elementlengte op basis van type en PIPE_EL
+    const elMat = perElementMaterials?.get(ei);
+    const pipeEl = (elMat as any)?.pipeEl || 0;
+    let targetLen: number;
+    if (el.type === "bend") {
+      // Bochten: fijnere mesh voor nauwkeurige buigspanningen
+      targetLen = pipeEl > 0 ? Math.min(pipeEl * 3, 500) : 500;
+    } else if (L > 20000) {
+      // Zeer lange elementen (HDD kruisingen): grovere mesh acceptabel
+      targetLen = pipeEl > 0 ? Math.min(pipeEl * 10, 2000) : 2000;
+    } else {
+      // Normale rechte buizen
+      targetLen = pipeEl > 0 ? Math.min(pipeEl * 5, DEFAULT_MAX_EL) : DEFAULT_MAX_EL;
+    }
+    // Minimaal 200mm om niet te fijn te worden
+    targetLen = Math.max(targetLen, 200);
+
+    const nSub = L > targetLen ? Math.ceil(L / targetLen) : 1;
 
     if (nSub === 1) {
       // Geen opsplitsing nodig
@@ -1341,7 +1376,6 @@ export function solveFEM(input: FemSolverInput): FemSolverOutput {
     } else {
       // Splits element in nSub sub-elementen
       const subIndices: number[] = [];
-      const elMat = perElementMaterials?.get(ei);
       let prevNodeIdx = el.n1;
 
       for (let s = 0; s < nSub; s++) {
@@ -1387,26 +1421,64 @@ export function solveFEM(input: FemSolverInput): FemSolverOutput {
     }
   }
 
-  // Voeg grondveren toe voor nieuwe tussennodes (erven van de dichtstbijzijnde originele spring)
+  // ── Grondveren voor tussennodes: interpoleer op basis van naburige originele nodes ──
+  // Bouw eerst een map van nodeId → SoilSpring voor originele nodes
+  const soilSpringMap = new Map<string, SoilSpring>();
+  for (const ss of soilSprings) soilSpringMap.set(ss.nodeId, ss);
+
+  // Voor elke originele node: sla de index-gebaseerde stijfheden op
+  const soilByIndex = new Map<number, SoilSpring>();
+  for (let ni = 0; ni < nodes.length; ni++) {
+    const ss = soilSpringMap.get(nodes[ni].id);
+    if (ss) soilByIndex.set(ni, ss);
+  }
+
   const workSoilSprings: SoilSpring[] = [...soilSprings];
   const existingSoilNodeIds = new Set(soilSprings.map(ss => ss.nodeId));
+
   for (let ni = nodes.length; ni < workNodes.length; ni++) {
     const wn = workNodes[ni];
-    if (wn.id && !existingSoilNodeIds.has(wn.id) && soilSprings.length > 0) {
-      // Gebruik dezelfde kh/kv als de eerste grondveer (alle nodes zelfde grondtype)
-      const ref = soilSprings[0];
-      workSoilSprings.push({
-        nodeId: wn.id,
-        kh: ref.kh,
-        kv_up: ref.kv_up,
-        kv_down: ref.kv_down,
-        kAxial: ref.kAxial,
-      });
+    if (!wn.id || existingSoilNodeIds.has(wn.id)) continue;
+
+    // Vind de twee dichtstbijzijnde originele nodes met grondveren
+    let bestDist1 = Infinity, bestDist2 = Infinity;
+    let best1: SoilSpring | null = null, best2: SoilSpring | null = null;
+    for (const [origIdx, ss] of soilByIndex) {
+      const on = nodes[origIdx];
+      const ddx = wn.x - on.x, ddy = wn.y - on.y, ddz = (wn.z || 0) - (on.z || 0);
+      const dist = Math.sqrt(ddx * ddx + ddy * ddy + ddz * ddz);
+      if (dist < bestDist1) {
+        bestDist2 = bestDist1; best2 = best1;
+        bestDist1 = dist; best1 = ss;
+      } else if (dist < bestDist2) {
+        bestDist2 = dist; best2 = ss;
+      }
+    }
+
+    if (best1) {
+      if (best2 && bestDist1 + bestDist2 > 0) {
+        // Inverse-distance interpolatie
+        const w1 = bestDist2 / (bestDist1 + bestDist2);
+        const w2 = bestDist1 / (bestDist1 + bestDist2);
+        workSoilSprings.push({
+          nodeId: wn.id,
+          kh: w1 * best1.kh + w2 * best2.kh,
+          kv_up: w1 * best1.kv_up + w2 * best2.kv_up,
+          kv_down: w1 * best1.kv_down + w2 * best2.kv_down,
+          kAxial: w1 * (best1.kAxial || 0) + w2 * (best2.kAxial || 0),
+          rMaxSide: best1.rMaxSide !== undefined ? w1 * (best1.rMaxSide || 0) + w2 * (best2?.rMaxSide || 0) : undefined,
+          rMaxDown: best1.rMaxDown !== undefined ? w1 * (best1.rMaxDown || 0) + w2 * (best2?.rMaxDown || 0) : undefined,
+          rMaxUp: best1.rMaxUp !== undefined ? w1 * (best1.rMaxUp || 0) + w2 * (best2?.rMaxUp || 0) : undefined,
+        });
+      } else {
+        // Slechts 1 grondveer: kopieer
+        workSoilSprings.push({ ...best1, nodeId: wn.id });
+      }
     }
   }
 
   if (typeof console !== "undefined" && workNodes.length > nodes.length) {
-    console.log(`[FEM] Element subdivision: ${nodes.length} nodes → ${workNodes.length}, ${elements.length} elements → ${workElements.length}`);
+    console.log(`[FEM] Element subdivision: ${nodes.length} nodes → ${workNodes.length}, ${elements.length} elements → ${workElements.length} (target: ${DEFAULT_MAX_EL}mm)`);
   }
 
   // Gebruik de opgesplitste nodes/elementen voor de rest van de solver
@@ -1563,8 +1635,8 @@ export function solveFEM(input: FemSolverInput): FemSolverOutput {
       }
     }
 
-    // Lokale stijfheidsmatrix (met per-element E)
-    const Klocal = buildLocalK(elMat.E, G, geo.As, geo.I, geo.I, geo.J, L, flexFactor);
+    // Lokale stijfheidsmatrix (met per-element E en plane strain correctie)
+    const Klocal = buildLocalK(elMat.E, G, geo.As, geo.I, geo.I, geo.J, L, flexFactor, elMat.poisson);
 
     // Transformatiematrix
     const T = buildTransformMatrix(n1.x, n1.y, n1.z || 0, n2.x, n2.y, n2.z || 0);
@@ -1683,18 +1755,68 @@ export function solveFEM(input: FemSolverInput): FemSolverOutput {
   // Stap 3: Grondveren — bilineair model (Prioriteit 1)
   // Richting-afhankelijk: kies k op basis van verplaatsingsrichting
   // In plastisch bereik: constante reactiekracht R_max
+  //
+  // PLE4Win consistent Winkler model (uit PleFunction6.dll decompilatie):
+  // Naast diagonale veerstijfheden voegt PLE4Win off-diagonale koppeltermen
+  // toe die verplaatsing ↔ rotatie koppelen. Dit is de "consistent" spring
+  // matrix voor een verdeelde veer over een balklengte L:
+  //   K_diag(v,v)  = k × L × 13/35     K_offdiag(v,θ) = k × L² × 11/210
+  //   K_diag(θ,θ)  = k × L³ × 1/105    K_cross(v2,θ1) = -k × L² × 13/420
+  // Hierbij is k de veerstijfheid per lengte-eenheid (N/mm²).
+  // De lumped benadering (alleen diagonaal k×L/2) is minder nauwkeurig.
   // =====================================================
   for (const sd of soilNodeData) {
     const baseDof = sd.baseDof;
 
-    // Horizontaal x: gebruik effectieve stijfheid (aangepast in vorige iteratie)
-    madd(Kglobal, nDof, baseDof + 0, baseDof + 0, sd.kx_eff);
+    // Bereken invloedslengte voor consistent spring model
+    const Linfl = sd.influenceLength;
 
-    // Horizontaal y
-    madd(Kglobal, nDof, baseDof + 1, baseDof + 1, sd.ky_eff);
+    // ─── Horizontaal x: consistent spring matrix ───
+    if (sd.kx_eff > 0 && Linfl > 1) {
+      // k_per_length = kx_eff / Linfl (want kx_eff = k × DPE × L)
+      const kpl_x = sd.kx_eff / Linfl;
+      // Consistent diagonaal: 13/35 × k × L (i.p.v. 1/2 × k × L)
+      const kd_x = kpl_x * Linfl * 13.0 / 35.0;
+      madd(Kglobal, nDof, baseDof + 0, baseDof + 0, kd_x);
+      // Off-diagonaal: koppeling ux ↔ ry (rotatie om y-as)
+      // Consistent: 11/210 × k × L²
+      const kc_x = kpl_x * Linfl * Linfl * 11.0 / 210.0;
+      madd(Kglobal, nDof, baseDof + 0, baseDof + 4, kc_x);
+      madd(Kglobal, nDof, baseDof + 4, baseDof + 0, kc_x);
+      // Rotatie-stijfheid: 1/105 × k × L³
+      const kr_x = kpl_x * Linfl * Linfl * Linfl / 105.0;
+      madd(Kglobal, nDof, baseDof + 4, baseDof + 4, kr_x);
+    } else {
+      madd(Kglobal, nDof, baseDof + 0, baseDof + 0, sd.kx_eff);
+    }
 
-    // Verticaal z: richting-afhankelijk (kz_down of kz_up)
-    madd(Kglobal, nDof, baseDof + 2, baseDof + 2, sd.kz_eff);
+    // ─── Horizontaal y: consistent spring matrix ───
+    if (sd.ky_eff > 0 && Linfl > 1) {
+      const kpl_y = sd.ky_eff / Linfl;
+      const kd_y = kpl_y * Linfl * 13.0 / 35.0;
+      madd(Kglobal, nDof, baseDof + 1, baseDof + 1, kd_y);
+      const kc_y = kpl_y * Linfl * Linfl * 11.0 / 210.0;
+      madd(Kglobal, nDof, baseDof + 1, baseDof + 5, -kc_y); // uy ↔ rz (teken: -kc)
+      madd(Kglobal, nDof, baseDof + 5, baseDof + 1, -kc_y);
+      const kr_y = kpl_y * Linfl * Linfl * Linfl / 105.0;
+      madd(Kglobal, nDof, baseDof + 5, baseDof + 5, kr_y);
+    } else {
+      madd(Kglobal, nDof, baseDof + 1, baseDof + 1, sd.ky_eff);
+    }
+
+    // ─── Verticaal z: consistent spring matrix ───
+    if (sd.kz_eff > 0 && Linfl > 1) {
+      const kpl_z = sd.kz_eff / Linfl;
+      const kd_z = kpl_z * Linfl * 13.0 / 35.0;
+      madd(Kglobal, nDof, baseDof + 2, baseDof + 2, kd_z);
+      const kc_z = kpl_z * Linfl * Linfl * 11.0 / 210.0;
+      madd(Kglobal, nDof, baseDof + 2, baseDof + 4, -kc_z); // uz ↔ ry
+      madd(Kglobal, nDof, baseDof + 4, baseDof + 2, -kc_z);
+      const kr_z = kpl_z * Linfl * Linfl * Linfl / 105.0;
+      madd(Kglobal, nDof, baseDof + 4, baseDof + 4, kr_z);
+    } else {
+      madd(Kglobal, nDof, baseDof + 2, baseDof + 2, sd.kz_eff);
+    }
 
     // Axiaal (wrijving) — als beschikbaar
     if (sd.kax_eff > 0) {
@@ -2046,7 +2168,7 @@ export function solveFEM(input: FemSolverInput): FemSolverOutput {
         }
 
         // Materiële stijfheidsmatrix
-        const Klocal = buildLocalK(elMat.E, G, geo.As, geo.I, geo.I, geo.J, L, flexFactor);
+        const Klocal = buildLocalK(elMat.E, G, geo.As, geo.I, geo.I, geo.J, L, flexFactor, elMat.poisson);
 
         // Geometrische stijfheidsmatrix (P-δ)
         const Naxial = axialForces[ei] || 0;
@@ -2322,7 +2444,7 @@ export function solveFEM(input: FemSolverInput): FemSolverOutput {
           else { sif = calcTeeSIF(D_el, t_el, D_el * 0.7, t_el, "Welded", 0).sifRun; }
         }
 
-        const Klocal = buildLocalK(Eeff, G, geo.As, geo.I, geo.I, geo.J, L, flexFactor);
+        const Klocal = buildLocalK(Eeff, G, geo.As, geo.I, geo.I, geo.J, L, flexFactor, elMat.poisson);
         const T = buildTransformMatrix(x1, y1, z1, x2, y2, z2);
         const Tt = mtranspose(T, 12);
         const KT = mmmul(Klocal, T, 12);
@@ -2498,10 +2620,19 @@ export function solveFEM(input: FemSolverInput): FemSolverOutput {
     const sa = geo.As > 0 ? Fx / geo.As : 0;
 
     // Totale longitudinale spanning
-    const sl = sa + sb;
+    // EN 13941-1 §10.4: σl = σa + σb + ν×σh (Poisson-koppeling met hoopspanning)
+    // PLE4Win neemt deze term altijd mee — slp was al berekend maar niet gebruikt
+    const sl = sa + sb + slp;
 
-    // Von Mises
-    const vm = calcVonMises(sh, sl);
+    // Torsiemoment uit elementkrachten (voor Von Mises)
+    let Mx_beam = 0;
+    if (elIdx >= 0 && elementForces[elIdx]) {
+      Mx_beam = Math.abs(elementForces[elIdx].Mx1);
+    }
+    const tauTorsion_beam = geo.W > 0 ? Mx_beam / (2 * Math.PI * (geo.ro + geo.ri) / 2 * ((geo.ro + geo.ri) / 2) * t_w) : 0;
+
+    // Von Mises met torsie: σvm = √(σh² - σh·σl + σl² + 3·τ²)
+    const vm = Math.sqrt(sh * sh - sh * sl + sl * sl + 3 * tauTorsion_beam * tauTorsion_beam);
 
     // Unity check (per-element SMYS)
     const { ucRing, ucVM, uc } = calcUC(sh, vm, nodeMat.SMYS, designFactor, gammaM, weldFactor);
