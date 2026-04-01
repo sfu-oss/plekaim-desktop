@@ -8,7 +8,7 @@
 #ifndef EIGEN_SPARSECORE_MODULE_H
 #define EIGEN_SPARSECORE_MODULE_H
 
-#include "Core"
+#include <Eigen/Core>
 
 #include "src/Core/util/DisableStupidWarnings.h"
 
