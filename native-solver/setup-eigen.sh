@@ -7,9 +7,14 @@ set -e
 EIGEN_VERSION="3.4.0"
 EIGEN_DIR="deps/eigen"
 
-if [ -d "$EIGEN_DIR/Eigen" ]; then
+if [ -f "$EIGEN_DIR/Eigen/Core" ]; then
   echo "Eigen already present in $EIGEN_DIR"
   exit 0
+fi
+
+# If directory exists but is incomplete, wipe and re-download
+if [ -d "$EIGEN_DIR" ]; then
+  rm -rf "$EIGEN_DIR"
 fi
 
 echo "Downloading Eigen $EIGEN_VERSION..."
