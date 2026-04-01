@@ -1,6 +1,6 @@
 {
   "name": "kaimple-desktop",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "private": true,
   "description": "KaimPLE desktop app (Electron + Next.js + Native FEM Solver)",
   "main": "electron/main.js",
@@ -27,7 +27,11 @@
       {
         "from": "native-solver",
         "to": "native-solver",
-        "filter": ["index.js", "package.json", "build/**/*.node"]
+        "filter": [
+          "index.js",
+          "package.json",
+          "build/**/*.node"
+        ]
       }
     ],
     "asar": true,
