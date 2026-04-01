@@ -637,50 +637,74 @@ function mtranspose(M: Float64Array, n: number): Float64Array {
 
 /** Los K·u = F op, overschrijft K en F. Retourneert u = F na oplossing. */
 function solveLinear(K: Float64Array, F: Float64Array, n: number): Float64Array {
-  // Forward elimination met gedeeltelijke pivotering
+  // ── Bandbreedte detectie voor pipeline FEM matrices ──
+  // Pipeline matrices zijn banded (bandbreedte ≈ 12-24 voor 6-DOF elementen).
+  // Door alleen binnen de band te werken: O(n × bw²) i.p.v. O(n³).
+  // Voor n=9000, bw=24: 9000×576 = 5.2M ops vs 729G ops → ~140000× sneller.
+  let bandwidth = 0;
+  for (let i = 0; i < n && bandwidth < n; i++) {
+    for (let j = n - 1; j > i; j--) {
+      if (Math.abs(K[i * n + j]) > 1e-30 || Math.abs(K[j * n + i]) > 1e-30) {
+        if (j - i > bandwidth) bandwidth = j - i;
+        break;
+      }
+    }
+    // Early exit: als we genoeg rijen gescand hebben om de band te kennen
+    if (i > bandwidth * 2 && bandwidth > 0) break;
+  }
+  // Voeg marge toe voor pivot-wissels en rond af
+  bandwidth = Math.min(Math.ceil(bandwidth * 1.2) + 6, n - 1);
+
+  if (typeof console !== "undefined") {
+    console.log(`[FEM] Solver: n=${n}, detected bandwidth=${bandwidth}, density=${(100 * (2*bandwidth+1)/n).toFixed(1)}%`);
+  }
+
+  // Forward elimination met gedeeltelijke pivotering (banded)
   for (let col = 0; col < n; col++) {
-    // Zoek pivot
-    let maxVal = Math.abs(mget(K, n, col, col));
+    // Zoek pivot — alleen binnen band
+    const searchEnd = Math.min(col + bandwidth + 1, n);
+    let maxVal = Math.abs(K[col * n + col]);
     let maxRow = col;
-    for (let row = col + 1; row < n; row++) {
-      const v = Math.abs(mget(K, n, row, col));
+    for (let row = col + 1; row < searchEnd; row++) {
+      const v = Math.abs(K[row * n + col]);
       if (v > maxVal) { maxVal = v; maxRow = row; }
     }
 
-    // Wissel rijen als nodig
+    // Wissel rijen als nodig — alleen niet-nul kolommen
     if (maxRow !== col) {
-      for (let j = col; j < n; j++) {
-        const tmp = mget(K, n, col, j);
-        mset(K, n, col, j, mget(K, n, maxRow, j));
-        mset(K, n, maxRow, j, tmp);
+      const jStart = col;
+      const jEnd = Math.min(col + bandwidth + 1, n);
+      for (let j = jStart; j < jEnd; j++) {
+        const ci = col * n + j, mi = maxRow * n + j;
+        const tmp = K[ci]; K[ci] = K[mi]; K[mi] = tmp;
       }
       const tmpF = F[col]; F[col] = F[maxRow]; F[maxRow] = tmpF;
     }
 
-    const pivot = mget(K, n, col, col);
-    if (Math.abs(pivot) < 1e-20) {
-      // Singuliere matrix — sla kolom over (vaste DOF)
-      continue;
-    }
+    const pivot = K[col * n + col];
+    if (Math.abs(pivot) < 1e-20) continue;
 
-    // Elimineer kolom
-    for (let row = col + 1; row < n; row++) {
-      const factor = mget(K, n, row, col) / pivot;
+    // Elimineer kolom — alleen rijen en kolommen binnen band
+    const rowEnd = Math.min(col + bandwidth + 1, n);
+    for (let row = col + 1; row < rowEnd; row++) {
+      const factor = K[row * n + col] / pivot;
       if (factor === 0) continue;
-      for (let j = col; j < n; j++) {
-        madd(K, n, row, j, -factor * mget(K, n, col, j));
+      const jEnd = Math.min(col + bandwidth + 1, n);
+      for (let j = col; j < jEnd; j++) {
+        K[row * n + j] -= factor * K[col * n + j];
       }
       F[row] -= factor * F[col];
     }
   }
 
-  // Back substitution
+  // Back substitution (banded)
   for (let i = n - 1; i >= 0; i--) {
-    const pivot = mget(K, n, i, i);
+    const pivot = K[i * n + i];
     if (Math.abs(pivot) < 1e-20) { F[i] = 0; continue; }
     let s = F[i];
-    for (let j = i + 1; j < n; j++) {
-      s -= mget(K, n, i, j) * F[j];
+    const jEnd = Math.min(i + bandwidth + 1, n);
+    for (let j = i + 1; j < jEnd; j++) {
+      s -= K[i * n + j] * F[j];
     }
     F[i] = s / pivot;
   }
@@ -1315,17 +1339,109 @@ export function solveFEM(input: FemSolverInput): FemSolverOutput {
   // PLE4Win verdeelt elementen via PIPE_EL (typisch 125-200mm voor rechte stukken)
   // en BEND_EL (typisch 62.5mm voor bochten).
   //
-  // In een browser-solver is dat te fijn (3744 elementen → O(n³) te traag).
-  // Compromis: cap op ~1500 totale elementen (≈ 9000 DOF → haalbaar in JS).
-  // 
-  // Per element: nSub = ceil(L / targetLen) met:
-  //   - targetLen = min(pipeEl * 5, 1000) voor normale buizen
-  //   - targetLen = min(pipeEl * 3, 500) voor bochten
-  //   - targetLen = 2000 voor HDD/elastische segmenten (> 20m)
-  //   - Globaal maximum: 2000mm
+  // Browser-solver beperking: K-matrix is O(n²) geheugen.
+  // - 1500 nodes → 9000 DOFs → ~648 MB (haalbaar)
+  // - 3000 nodes → 18000 DOFs → ~2.6 GB (CRASH)
+  // Daarom: harde cap op MAX_TOTAL_ELEMENTS elementen.
+  //
+  // HDD-detectie: elementen met BENDRAD > 5000mm (5m) zijn gestuurde boringen,
+  // niet normale bochten. Die krijgen grove mesh (2-5km targets).
   // =====================================================
   const DEFAULT_MAX_EL = 1000; // mm — standaard maximale elementlengte
+  const MAX_TOTAL_ELEMENTS = 1500; // Harde cap — voorkomt browser OOM crash
 
+  // ── Pass 1: bereken gewenste subdivision per element ──
+  interface SubPlan { ei: number; nSub: number; targetLen: number; L: number; priority: number; }
+  const subPlans: SubPlan[] = [];
+
+  for (let ei = 0; ei < elements.length; ei++) {
+    const el = elements[ei];
+    const n1 = nodes[el.n1], n2 = nodes[el.n2];
+    if (!n1 || !n2) { subPlans.push({ ei, nSub: 1, targetLen: 0, L: 0, priority: 0 }); continue; }
+
+    const dx = n2.x - n1.x, dy = n2.y - n1.y, dz = (n2.z || 0) - (n1.z || 0);
+    const L = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+    const elMat = perElementMaterials?.get(ei);
+    const pipeEl = (elMat as any)?.pipeEl || 0;
+    const bendRad = el.R || 0;
+
+    // HDD-detectie: grote bochtradius (>5m) EN lang segment → gestuurde boring
+    const isHDD = bendRad > 5000 && L > 10000;
+    // Echte bocht: type=bend EN kleine radius (< 5m) EN kort segment
+    const isRealBend = el.type === "bend" && !isHDD;
+
+    let targetLen: number;
+    let priority: number; // hogere prioriteit = fijnere mesh behouden bij budget-limiet
+
+    if (isRealBend) {
+      // Echte bochten: fijnere mesh — hoogste prioriteit
+      targetLen = pipeEl > 0 ? Math.min(pipeEl * 3, 500) : 500;
+      priority = 3;
+    } else if (isHDD || L > 20000) {
+      // HDD kruisingen of zeer lange segmenten: grove mesh
+      targetLen = pipeEl > 0 ? Math.min(pipeEl * 10, 5000) : 5000;
+      priority = 1;
+    } else {
+      // Normale rechte buizen
+      targetLen = pipeEl > 0 ? Math.min(pipeEl * 5, DEFAULT_MAX_EL) : DEFAULT_MAX_EL;
+      priority = 2;
+    }
+    targetLen = Math.max(targetLen, 200);
+
+    const nSub = L > targetLen ? Math.ceil(L / targetLen) : 1;
+    subPlans.push({ ei, nSub, targetLen, L, priority });
+  }
+
+  // ── Pass 2: als totaal > MAX_TOTAL_ELEMENTS, schaal terug ──
+  let totalSub = subPlans.reduce((s, p) => s + p.nSub, 0);
+
+  if (totalSub > MAX_TOTAL_ELEMENTS) {
+    // Reduceer in volgorde van prioriteit (laagste eerst)
+    // Stap 1: halveer alle HDD/lage-prioriteit elementen
+    for (const p of subPlans) {
+      if (totalSub <= MAX_TOTAL_ELEMENTS) break;
+      if (p.priority <= 1 && p.nSub > 1) {
+        const newSub = Math.max(1, Math.ceil(p.nSub / 4));
+        totalSub -= (p.nSub - newSub);
+        p.nSub = newSub;
+      }
+    }
+    // Stap 2: halveer normale elementen
+    for (const p of subPlans) {
+      if (totalSub <= MAX_TOTAL_ELEMENTS) break;
+      if (p.priority <= 2 && p.nSub > 1) {
+        const newSub = Math.max(1, Math.ceil(p.nSub / 2));
+        totalSub -= (p.nSub - newSub);
+        p.nSub = newSub;
+      }
+    }
+    // Stap 3: als nog steeds te veel, reduceer bochten ook
+    for (const p of subPlans) {
+      if (totalSub <= MAX_TOTAL_ELEMENTS) break;
+      if (p.nSub > 2) {
+        const newSub = Math.max(2, Math.ceil(p.nSub / 2));
+        totalSub -= (p.nSub - newSub);
+        p.nSub = newSub;
+      }
+    }
+    // Stap 4: ultieme noodrem — alles naar max 3 sub-elementen
+    if (totalSub > MAX_TOTAL_ELEMENTS) {
+      for (const p of subPlans) {
+        if (totalSub <= MAX_TOTAL_ELEMENTS) break;
+        if (p.nSub > 3) {
+          totalSub -= (p.nSub - 3);
+          p.nSub = 3;
+        }
+      }
+    }
+  }
+
+  if (typeof console !== "undefined") {
+    console.log(`[FEM] Subdivision plan: ${elements.length} elements → ${totalSub} sub-elements (cap: ${MAX_TOTAL_ELEMENTS})`);
+  }
+
+  // ── Pass 3: voer de opsplitsing uit ──
   // Werk op kopieën zodat het origineel behouden blijft
   const workNodes: FemNode[] = [...nodes.map(n => ({ ...n }))];
   const workElements: FemElement[] = [];
@@ -1347,25 +1463,8 @@ export function solveFEM(input: FemSolverInput): FemSolverOutput {
 
     const dx = n2.x - n1.x, dy = n2.y - n1.y, dz = (n2.z || 0) - (n1.z || 0);
     const L = Math.sqrt(dx * dx + dy * dy + dz * dz);
-
-    // Bepaal target elementlengte op basis van type en PIPE_EL
     const elMat = perElementMaterials?.get(ei);
-    const pipeEl = (elMat as any)?.pipeEl || 0;
-    let targetLen: number;
-    if (el.type === "bend") {
-      // Bochten: fijnere mesh voor nauwkeurige buigspanningen
-      targetLen = pipeEl > 0 ? Math.min(pipeEl * 3, 500) : 500;
-    } else if (L > 20000) {
-      // Zeer lange elementen (HDD kruisingen): grovere mesh acceptabel
-      targetLen = pipeEl > 0 ? Math.min(pipeEl * 10, 2000) : 2000;
-    } else {
-      // Normale rechte buizen
-      targetLen = pipeEl > 0 ? Math.min(pipeEl * 5, DEFAULT_MAX_EL) : DEFAULT_MAX_EL;
-    }
-    // Minimaal 200mm om niet te fijn te worden
-    targetLen = Math.max(targetLen, 200);
-
-    const nSub = L > targetLen ? Math.ceil(L / targetLen) : 1;
+    const nSub = subPlans[ei].nSub;
 
     if (nSub === 1) {
       // Geen opsplitsing nodig
