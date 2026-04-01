@@ -51,32 +51,41 @@ const NODE_COLS: PleColumnDef[] = [
 ];
 
 const DIAM_COLS: PleColumnDef[] = [
-  { key: "ident", label: "Ident", type: "text", width: 90, required: true },
+  { key: "ident", label: "Ident", type: "text", width: 90 },
   { key: "dout1", label: "DOUT1", unit: "mm", type: "number", width: 80, min: 10, max: 2000, decimals: 1 },
   { key: "dout2", label: "DOUT2", unit: "mm", type: "number", width: 80, decimals: 1 },
+  { key: "ioval1", label: "IOVAL1", type: "number", width: 75, decimals: 2 },
+  { key: "ioval2", label: "IOVAL2", type: "number", width: 75, decimals: 2 },
 ];
 
 const WALL_COLS: PleColumnDef[] = [
-  { key: "ident", label: "Ident", type: "text", width: 90, required: true },
+  { key: "ident", label: "Ident", type: "text", width: 90 },
   { key: "tnom1", label: "T-NOM1", unit: "mm", type: "number", width: 80, min: 1, max: 100, decimals: 1 },
+  { key: "corAl1", label: "COR-AL1", unit: "mm", type: "number", width: 80, decimals: 2 },
+  { key: "rtol1", label: "RTOL1", unit: "%", type: "number", width: 75, decimals: 2 },
+  { key: "atol1", label: "ATOL1", unit: "mm", type: "number", width: 75, decimals: 2 },
   { key: "tnom2", label: "T-NOM2", unit: "mm", type: "number", width: 80, decimals: 1 },
+  { key: "corAl2", label: "COR-AL2", unit: "mm", type: "number", width: 80, decimals: 2 },
+  { key: "rtol2", label: "RTOL2", unit: "%", type: "number", width: 75, decimals: 2 },
+  { key: "atol2", label: "ATOL2", unit: "mm", type: "number", width: 75, decimals: 2 },
 ];
 
 const MATL_COLS: PleColumnDef[] = [
-  { key: "ident", label: "Ident", type: "text", width: 90, required: true },
-  { key: "matRef", label: "Materiaal", type: "text", width: 100 },
-  { key: "fabmet", label: "Fabricage", type: "select", options: ["none", "seam-welded", "seamless"], width: 100 },
+  { key: "ident", label: "Ident", type: "text", width: 90 },
+  { key: "matRef", label: "Materiaal", type: "text", width: 100, datalist: MATERIAL_REFS },
+  { key: "fabmet", label: "Fabricage", type: "select", options: ["", "none", "seam-welded", "seamless"], width: 110 },
   { key: "matfact", label: "MATFACT", type: "number", width: 70, decimals: 2 },
 ];
 
 const ISTROP_COLS: PleColumnDef[] = [
-  { key: "matRef", label: "Materiaal", type: "text", width: 100, required: true },
+  { key: "matRef", label: "Materiaal", type: "text", width: 100, required: true, datalist: MATERIAL_REFS },
   { key: "E", label: "E-mod", unit: "MPa", type: "number", width: 80 },
   { key: "nu", label: "ν", type: "number", width: 60, decimals: 2 },
   { key: "alpha", label: "α", unit: "1/°C", type: "number", width: 80, decimals: 7 },
   { key: "Re", label: "Re (SMYS)", unit: "MPa", type: "number", width: 80 },
   { key: "ReT", label: "ReT", unit: "MPa", type: "number", width: 70 },
   { key: "weight", label: "WEIGHT", unit: "N/mm³", type: "number", width: 90, decimals: 7 },
+  { key: "matCat", label: "MATCAT", type: "text", width: 90 },
 ];
 
 const PRESS_COLS: PleColumnDef[] = [
@@ -95,8 +104,8 @@ const TEMP_COLS: PleColumnDef[] = [
 
 const ENDPTS_COLS: PleColumnDef[] = [
   { key: "ident", label: "Ident", type: "text", width: 90, required: true },
-  { key: "cond", label: "Conditie", type: "select", options: ["fixed", "free", "spring", "guided", "infin"], width: 80 },
-  { key: "state", label: "Status", type: "select", options: ["open", "closed"], width: 70 },
+  { key: "cond", label: "Conditie", type: "select", options: ["INFIN", "FIXED", "FREE", "SPRING", "GUIDED"], width: 90 },
+  { key: "state", label: "Status", type: "select", options: ["OPEN", "CLOSED"], width: 80 },
 ];
 
 const CONNECT_COLS: PleColumnDef[] = [
@@ -108,7 +117,7 @@ const CONNECT_COLS: PleColumnDef[] = [
 
 const TEESPEC_COLS: PleColumnDef[] = [
   { key: "teeRef", label: "TEE-REF", type: "text", width: 90, required: true },
-  { key: "type", label: "Type", type: "select", options: ["Welded", "Reinforced", "Forged"], width: 90 },
+  { key: "type", label: "Type", type: "select", options: ["WELD", "REIN", "UNRE", "EXTR", "W-IN", "W-ON"], width: 90 },
   { key: "matRef", label: "Mat Run", type: "text", width: 80 },
   { key: "matBrn", label: "Mat Brn", type: "text", width: 80 },
   { key: "dRun", label: "D-Run", unit: "mm", type: "number", width: 70 },
@@ -129,8 +138,12 @@ const TEECONF_COLS: PleColumnDef[] = [
 const SUPPORT_COLS: PleColumnDef[] = [
   { key: "refIdent", label: "RefIdent", type: "text", width: 90, required: true },
   { key: "deltaAxL", label: "ΔAX-L", unit: "mm", type: "number", width: 100 },
-  { key: "cosys", label: "CoSys", type: "select", options: ["Local", "Global"], width: 70 },
+  { key: "cosys", label: "CoSys", type: "select", options: ["GLOBAL", "LOCAL", "FLOCAL"], width: 80 },
   { key: "supRef", label: "SupRef", type: "text", width: 70 },
+  { key: "supLeng", label: "SupLeng", unit: "mm", type: "number", width: 85 },
+  { key: "supAngle", label: "SupAngle", unit: "deg", type: "number", width: 85 },
+  { key: "added", label: "Added", type: "text", width: 70 },
+  { key: "distance", label: "Distance", unit: "mm", type: "number", width: 85 },
 ];
 
 const ELSPRS_COLS: PleColumnDef[] = [

@@ -996,7 +996,7 @@ export function calcTeeSIF(
   dBrn: number, tBrn: number,
   teeType: string, te: number
 ): { sifRun: number; sifBrn: number } {
-  const T = teeType === "Welded" ? tRun : Math.max(tRun, te);
+  const T = (teeType === "WELD" || teeType === "Welded") ? tRun : Math.max(tRun, te);
   const r2 = dRun / 2 - tRun;
   const h = (T / r2) * (r2 / (dRun / 2)) ** 2;
   const sifRun = Math.max(0.9 / Math.pow(Math.max(h, 0.01), 2 / 3), 1.0);
@@ -1558,7 +1558,7 @@ export function solveFEM(input: FemSolverInput): FemSolverOutput {
         sif = sifRun;
       } else {
         // Fallback: gebruik element D/t als benadering
-        const { sifRun } = calcTeeSIF(D, t, D * 0.7, t, "Welded", 0);
+        const { sifRun } = calcTeeSIF(D, t, D * 0.7, t, "WELD", 0);
         sif = sifRun;
       }
     }

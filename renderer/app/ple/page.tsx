@@ -1469,7 +1469,7 @@ function PLECalculator() {
     if (parsed.meta.teeSpecData) {
       Object.entries(parsed.meta.teeSpecData).forEach(([ref, spec]: any) => {
         teeSpecs[ref] = {
-          type: spec.TYPE || spec.type || "Welded",
+          type: spec.TYPE || spec.type || "WELD",
           dRun: parseFloat(spec["D-RUN"]) || 273, tRun: parseFloat(spec["T-RUN"]) || 8,
           dBrn: parseFloat(spec["D-BRN"]) || 219, tBrn: parseFloat(spec["T-BRN"]) || 6.3,
           te: parseFloat(spec.TE) || 0, r0: parseFloat(spec.R0) || 50,
@@ -2252,11 +2252,11 @@ function PLECalculator() {
                 const tRun = spec["T-RUN"] || spec.tRun || 3.6;
                 const dBrn = spec["D-BRN"] || spec.dBrn || 139.7;
                 const tBrn = spec["T-BRN"] || spec.tBrn || 3.6;
-                const teeType = spec.TYPE || spec.type || "Reinforced";
+                const teeType = spec.TYPE || spec.type || "REIN";
                 const te = spec.TE || spec.te || 4.5;
                 // Eenvoudige SIF benadering ASME B31.3
                 const r2 = dRun / 2 - tRun;
-                const T = teeType === "Welded" ? tRun : Math.max(tRun, te);
+                const T = (teeType === "WELD" || teeType === "Welded") ? tRun : Math.max(tRun, te);
                 const h = (T / r2) * Math.pow(r2 / (dRun / 2), 2);
                 const sifRun = Math.max(0.9 / Math.pow(Math.max(h, 0.01), 2/3), 1.0);
                 const r2b = dBrn / 2 - tBrn;
@@ -3334,10 +3334,10 @@ function PLECalculator() {
                     const tRun = spec["T-RUN"] || spec.tRun || 3.6;
                     const dBrn = spec["D-BRN"] || spec.dBrn || 139.7;
                     const tBrn = spec["T-BRN"] || spec.tBrn || 3.6;
-                    const teeType = spec.TYPE || "Reinforced";
+                    const teeType = spec.TYPE || "REIN";
                     const te = spec.TE || 4.5;
                     const r2 = dRun / 2 - tRun;
-                    const T = teeType === "Welded" ? tRun : Math.max(tRun, te);
+                    const T = (teeType === "WELD" || teeType === "Welded") ? tRun : Math.max(tRun, te);
                     const h = (T / r2) * Math.pow(r2 / (dRun / 2), 2);
                     const sifRun = Math.max(0.9 / Math.pow(Math.max(h, 0.01), 2 / 3), 1.0);
                     const r2b = dBrn / 2 - tBrn;

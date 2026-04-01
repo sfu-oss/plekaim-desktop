@@ -34,19 +34,27 @@ export interface PleNode {
 }
 
 export interface PleDiam {
-  ident: string;
+  ident?: string;
   dout1: number;
   dout2: number | null;
+  ioval1?: number | null;
+  ioval2?: number | null;
 }
 
 export interface PleWall {
-  ident: string;
+  ident?: string;
   tnom1: number;
   tnom2: number | null;
+  corAl1?: number | null;
+  rtol1?: number | null;
+  atol1?: number | null;
+  corAl2?: number | null;
+  rtol2?: number | null;
+  atol2?: number | null;
 }
 
 export interface PleMatl {
-  ident: string;
+  ident?: string;
   matRef: string;
   fabmet: string;
   matfact: number;
@@ -60,6 +68,7 @@ export interface PleIstrop {
   Re: number;       // SMYS
   ReT: number;
   weight: number;   // N/mm³
+  matCat?: string;
 }
 
 export interface PleEndpt {
@@ -75,6 +84,8 @@ export interface PleSupport {
   supRef: string;
   supLeng: number;
   supAngle: number;
+  added?: string;
+  distance?: number | null;
   _resolvedNodeId?: string;
   _resolvedNodeIdx?: number;
 }
@@ -98,7 +109,7 @@ export interface PleConnect {
 
 export interface PleTeeSpec {
   teeRef: string;
-  type: string;     // "Welded" | "Reinforced" | "Forged"
+  type: string;     // "WELD" | "REIN" | "UNRE" | "EXTR" | "W-IN" | "W-ON"
   matRef: string;
   matBrn: string;
   dRun: number;
@@ -451,6 +462,8 @@ export function parseSheetsToModel(sheets: Record<string, any[][]>): PleModel {
     ident: normalizeId(d.Identifier || d.IDENT),
     dout1: toNum(d.DOUT1) || 0,
     dout2: toNum(d.DOUT2) || null,
+    ioval1: toNum(d.IOVAL1) || null,
+    ioval2: toNum(d.IOVAL2) || null,
   }));
 
   // Walls
@@ -458,6 +471,12 @@ export function parseSheetsToModel(sheets: Record<string, any[][]>): PleModel {
     ident: normalizeId(w.Identifier || w.IDENT),
     tnom1: toNum(w["T-NOM1"]) || 0,
     tnom2: toNum(w["T-NOM2"]) || null,
+    corAl1: toNum(w["COR-AL1"]) || null,
+    rtol1: toNum(w.RTOL1) || null,
+    atol1: toNum(w.ATOL1) || null,
+    corAl2: toNum(w["COR-AL2"]) || null,
+    rtol2: toNum(w.RTOL2) || null,
+    atol2: toNum(w.ATOL2) || null,
   }));
 
   // Materials
@@ -477,6 +496,7 @@ export function parseSheetsToModel(sheets: Record<string, any[][]>): PleModel {
     Re: toNum(m.Re) || 235,
     ReT: toNum(m.ReT) || 0,
     weight: toNum(m.WEIGHT) || 0,
+    matCat: normalizeId(m.MATCAT) || undefined,
   }));
 
   // ENDPTS
@@ -497,7 +517,7 @@ export function parseSheetsToModel(sheets: Record<string, any[][]>): PleModel {
   // TEESPEC
   const teeSpecs: PleTeeSpec[] = sheetToObjects(sheets.TEESPEC || []).map(t => ({
     teeRef: normalizeId(t["TEE-REF"] || t.TEEREF),
-    type: (t.TYPE || "Welded").toString().trim(),
+    type: (t.TYPE || "WELD").toString().trim(),
     matRef: normalizeId(t.MATREF),
     matBrn: normalizeId(t.MATBRN),
     dRun: toNum(t["D-RUN"]) || 0,
@@ -520,10 +540,12 @@ export function parseSheetsToModel(sheets: Record<string, any[][]>): PleModel {
   const supports: PleSupport[] = sheetToObjects(sheets.SUPPORT || []).map(s => ({
     refIdent: normalizeId(s.REFIDENT),
     deltaAxL: toNum(s["∆AX-L"]) || 0,
-    cosys: (s.COSYS || "Local").toString().trim(),
+    cosys: (s.COSYS || "LOCAL").toString().trim(),
     supRef: normalizeId(s.SUPREF),
     supLeng: toNum(s.SUPPLENG) || 0,
     supAngle: toNum(s.SUPANGLE) || 0,
+    added: normalizeId(s.ADDED) || undefined,
+    distance: toNum(s.DISTANCE) || null,
   }));
 
   // ELSPRS
@@ -1177,14 +1199,14 @@ export function modelToRawSheets(model: PleModel): Record<string, any[][]> {
 
   // DIAM
   sheets.DIAM = arrayToRaw(
-    model.diameters.map(d => ({ Identifier: d.ident, DOUT1: d.dout1, DOUT2: d.dout2 })),
-    [{ key: "Identifier" }, { key: "DOUT1", unit: "mm" }, { key: "DOUT2", unit: "mm" }],
+    model.diameters.map(d => ({ Identifier: d.ident, DOUT1: d.dout1, DOUT2: d.dout2, IOVAL1: d.ioval1, IOVAL2: d.ioval2 })),
+    [{ key: "Identifier" }, { key: "DOUT1", unit: "mm" }, { key: "DOUT2", unit: "mm" }, { key: "IOVAL1" }, { key: "IOVAL2" }],
   );
 
   // WALL
   sheets.WALL = arrayToRaw(
-    model.walls.map(w => ({ Identifier: w.ident, "T-NOM1": w.tnom1, "T-NOM2": w.tnom2 })),
-    [{ key: "Identifier" }, { key: "T-NOM1", unit: "mm" }, { key: "T-NOM2", unit: "mm" }],
+    model.walls.map(w => ({ Identifier: w.ident, "T-NOM1": w.tnom1, "COR-AL1": w.corAl1, RTOL1: w.rtol1, ATOL1: w.atol1, "T-NOM2": w.tnom2, "COR-AL2": w.corAl2, RTOL2: w.rtol2, ATOL2: w.atol2 })),
+    [{ key: "Identifier" }, { key: "T-NOM1", unit: "mm" }, { key: "COR-AL1", unit: "mm" }, { key: "RTOL1", unit: "%" }, { key: "ATOL1", unit: "mm" }, { key: "T-NOM2", unit: "mm" }, { key: "COR-AL2", unit: "mm" }, { key: "RTOL2", unit: "%" }, { key: "ATOL2", unit: "mm" }],
   );
 
   // MATL
@@ -1195,8 +1217,8 @@ export function modelToRawSheets(model: PleModel): Record<string, any[][]> {
 
   // ISTROP
   sheets.ISTROP = arrayToRaw(
-    model.materialProps.map(m => ({ MATREF: m.matRef, Emod: m.E, Nu: m.nu, ALPHA: m.alpha, Re: m.Re, ReT: m.ReT, WEIGHT: m.weight })),
-    [{ key: "MATREF" }, { key: "Emod", unit: "MPa" }, { key: "Nu" }, { key: "ALPHA", unit: "1/°C" }, { key: "Re", unit: "MPa" }, { key: "ReT", unit: "MPa" }, { key: "WEIGHT", unit: "N/mm³" }],
+    model.materialProps.map(m => ({ MATREF: m.matRef, Emod: m.E, Nu: m.nu, ALPHA: m.alpha, Re: m.Re, ReT: m.ReT, WEIGHT: m.weight, MATCAT: m.matCat })),
+    [{ key: "MATREF" }, { key: "Emod", unit: "MPa" }, { key: "Nu" }, { key: "ALPHA", unit: "1/°C" }, { key: "Re", unit: "MPa" }, { key: "ReT", unit: "MPa" }, { key: "WEIGHT", unit: "N/mm³" }, { key: "MATCAT" }],
   );
 
   // ENDPTS
@@ -1225,8 +1247,8 @@ export function modelToRawSheets(model: PleModel): Record<string, any[][]> {
 
   // SUPPORT
   sheets.SUPPORT = arrayToRaw(
-    model.supports.map(s => ({ REFIDENT: s.refIdent, "∆AX-L": s.deltaAxL, COSYS: s.cosys, SUPREF: s.supRef })),
-    [{ key: "REFIDENT" }, { key: "∆AX-L", unit: "mm" }, { key: "COSYS" }, { key: "SUPREF" }],
+    model.supports.map(s => ({ REFIDENT: s.refIdent, "∆AX-L": s.deltaAxL, COSYS: s.cosys, SUPREF: s.supRef, SUPPLENG: s.supLeng, SUPANGLE: s.supAngle, ADDED: s.added, DISTANCE: s.distance })),
+    [{ key: "REFIDENT" }, { key: "∆AX-L", unit: "mm" }, { key: "COSYS" }, { key: "SUPREF" }, { key: "SUPPLENG", unit: "mm" }, { key: "SUPANGLE", unit: "deg" }, { key: "ADDED" }, { key: "DISTANCE", unit: "mm" }],
   );
 
   // ELSPRS
